@@ -13,8 +13,7 @@ import database as db
 import dateutils
 import occorrencias as occ
 from dialogs import (
-    PerguntaSimNao, PopupLembrete, PopupAlerta, GerenciarLista,
-    editar_campo_texto, fluxo_marcar_resolvido, perguntar_dias_no_sistema,
+    PopupLembrete, PopupAlerta, GerenciarLista, editar_campo_texto, fluxo_marcar_resolvido,
 )
 
 INTERVALO_VERIFICACAO_MS = 30 * 1000  # checa lembretes a cada 30 segundos
@@ -166,6 +165,7 @@ class App(tk.Tk):
         self.after(1000, self._checar_lembretes)
 
         self._configurar_navegacao_setas()
+        self._configurar_atalhos_edicao()
         self.bind_all("<Control-f>", self._focar_busca)
 
     # ------------------------------------------------------------------
@@ -212,11 +212,11 @@ class App(tk.Tk):
 
         janela = tk.Toplevel(self)
         janela.title("Relatório")
-        janela.geometry("420x420")
+        janela.geometry("480x680")
         frame = ttk.Frame(janela, padding=12)
         frame.pack(fill="both", expand=True)
 
-        ttk.Label(frame, text="Unidades/siglas com mais ocorrências:",
+        ttk.Label(frame, text="Unidades com mais ocorrências (top 5):",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
         for sigla, total in dados["siglas_mais_ocorrencias"]:
             ttk.Label(frame, text="  %s — %d ocorrência(s)" % (sigla, total)).pack(anchor="w")
@@ -226,7 +226,61 @@ class App(tk.Tk):
         ttk.Separator(frame).pack(fill="x", pady=10)
         ttk.Label(frame, text="Tempo médio para solução do caso:",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="  %.1f dia(s)" % dados["tempo_medio_solucao"]).pack(anchor="w")
+        ttk.Label(frame, text="  %d dia(s) e %d hora(s)"
+                  % (dados["tempo_medio_dias"], dados["tempo_medio_horas"])).pack(anchor="w")
+
+        ttk.Separator(frame).pack(fill="x", pady=10)
+        ttk.Label(frame, text="Unidades mais morosas (top 5):",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        for sigla, total in dados["unidades_mais_morosas"]:
+            ttk.Label(frame, text="  %s — %d vez(es)" % (sigla, total)).pack(anchor="w")
+        if not dados["unidades_mais_morosas"]:
+            ttk.Label(frame, text="  (sem dados no histórico)").pack(anchor="w")
+
+        ttk.Separator(frame).pack(fill="x", pady=10)
+        ttk.Label(frame, text="Clientes mais morosos (top 5):",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        for cliente, total in dados["clientes_mais_morosos"]:
+            ttk.Label(frame, text="  %s — %d vez(es)" % (cliente, total)).pack(anchor="w")
+        if not dados["clientes_mais_morosos"]:
+            ttk.Label(frame, text="  (sem dados no histórico)").pack(anchor="w")
+
+        ttk.Separator(frame).pack(fill="x", pady=10)
+        ttk.Label(frame, text="Buscar NF no histórico:",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        linha_busca = ttk.Frame(frame)
+        linha_busca.pack(fill="x", pady=(4, 4))
+        var_nf_hist = tk.StringVar()
+        entry_nf_hist = ttk.Entry(linha_busca, textvariable=var_nf_hist, width=14)
+        entry_nf_hist.pack(side="left")
+        resultado_frame = ttk.Frame(frame)
+        resultado_frame.pack(fill="both", expand=True, pady=(4, 0))
+
+        def buscar_no_historico(event=None):
+            for widget in resultado_frame.winfo_children():
+                widget.destroy()
+            texto = var_nf_hist.get().strip()
+            if not texto.isdigit():
+                ttk.Label(resultado_frame, text="Digite um número de NF válido.").pack(anchor="w")
+                return
+            encontrados = db.buscar_historico_por_nf(int(texto))
+            if not encontrados:
+                ttk.Label(resultado_frame, text="Nenhum registro encontrado no histórico.").pack(anchor="w")
+                return
+            morosidade_txt = {"unidade": "Unidade", "cliente": "Cliente", "nenhum": "Sem morosidade"}
+            for h in encontrados:
+                texto_linha = (
+                    "NF %s / %s / Ocorrência: %s / Sigla: %s / Tempo: %d dia(s) e %d hora(s) / "
+                    "Morosidade: %s / Resolvida em: %s"
+                ) % (
+                    h["nf_numero"], h["cliente"], h["ocorrencia"], h["sigla"], h["dias"], h["horas"],
+                    morosidade_txt.get(h["morosidade"], "-"), h["resolvido_em"][:16].replace("T", " "),
+                )
+                ttk.Label(resultado_frame, text=texto_linha, wraplength=440, justify="left").pack(
+                    anchor="w", pady=2)
+
+        entry_nf_hist.bind("<Return>", buscar_no_historico)
+        ttk.Button(linha_busca, text="Buscar", command=buscar_no_historico).pack(side="left", padx=(6, 0))
 
         ttk.Separator(frame).pack(fill="x", pady=10)
         ttk.Button(frame, text="Apagar histórico (60 dias)",
@@ -283,8 +337,11 @@ class App(tk.Tk):
 
         # Navegacao entre campos com Enter, sem depender do TAB
         self.entry_nf.bind("<Return>", lambda e: self._focar(self.entry_cliente))
-        self.entry_cliente.bind("<Return>", lambda e: self._focar(self.entry_oc))
-        self.entry_oc.bind("<Return>", lambda e: self._focar(self.combo_sigla))
+        # Enter/Tab em Cliente e Ocorrência colam a sugestão (se houver) antes de avançar
+        self.entry_cliente.bind("<Return>", self._aceitar_sugestao_cliente)
+        self.entry_cliente.bind("<Tab>", self._aceitar_sugestao_cliente)
+        self.entry_oc.bind("<Return>", self._aceitar_sugestao_ocorrencia)
+        self.entry_oc.bind("<Tab>", self._aceitar_sugestao_ocorrencia)
         self.combo_sigla.bind("<Return>", lambda e: self._focar(self.entry_data))
         # Enter no ultimo campo (Data) equivale a clicar no botao "Adicionar nota"
         self.entry_data.bind("<Return>", self._acionar_botao_adicionar)
@@ -314,6 +371,84 @@ class App(tk.Tk):
             widget.bind("<Down>", lambda e, i=indice: mover(i, 1))
             widget.bind("<Up>", lambda e, i=indice: mover(i, -1))
 
+    def _configurar_atalhos_edicao(self):
+        """Adiciona Ctrl+Z (desfazer), Ctrl+Y (refazer), Ctrl+Backspace (apagar
+        palavra anterior) e Ctrl+Delete (apagar palavra seguinte) aos campos de
+        texto/combobox editáveis do sistema."""
+        campos = [
+            self.entry_nf, self.entry_cliente, self.entry_oc, self.combo_sigla,
+            self.entry_data, self.entry_busca, self.combo_filtro,
+        ]
+        for campo in campos:
+            self._instalar_atalhos_edicao(campo)
+
+    def _instalar_atalhos_edicao(self, widget):
+        widget._undo_stack = []
+        widget._redo_stack = []
+        widget._ultimo_valor_undo = widget.get()
+
+        def registrar_mudanca(event=None):
+            atual = widget.get()
+            if atual != widget._ultimo_valor_undo:
+                widget._undo_stack.append(widget._ultimo_valor_undo)
+                if len(widget._undo_stack) > 100:
+                    widget._undo_stack.pop(0)
+                widget._redo_stack.clear()
+                widget._ultimo_valor_undo = atual
+
+        def desfazer(event=None):
+            if widget._undo_stack:
+                atual = widget.get()
+                widget._redo_stack.append(atual)
+                anterior = widget._undo_stack.pop()
+                widget.delete(0, tk.END)
+                widget.insert(0, anterior)
+                widget._ultimo_valor_undo = anterior
+            return "break"
+
+        def refazer(event=None):
+            if widget._redo_stack:
+                atual = widget.get()
+                widget._undo_stack.append(atual)
+                proximo = widget._redo_stack.pop()
+                widget.delete(0, tk.END)
+                widget.insert(0, proximo)
+                widget._ultimo_valor_undo = proximo
+            return "break"
+
+        widget.bind("<KeyRelease>", registrar_mudanca, add="+")
+        widget.bind("<Control-z>", desfazer)
+        widget.bind("<Control-Z>", desfazer)
+        widget.bind("<Control-y>", refazer)
+        widget.bind("<Control-Y>", refazer)
+        widget.bind("<Control-BackSpace>", self._excluir_palavra_anterior)
+        widget.bind("<Control-Delete>", self._excluir_palavra_seguinte)
+
+    def _excluir_palavra_anterior(self, event):
+        widget = event.widget
+        texto = widget.get()
+        pos = widget.index(tk.INSERT)
+        i = pos
+        while i > 0 and texto[i - 1] == " ":
+            i -= 1
+        while i > 0 and texto[i - 1] != " ":
+            i -= 1
+        widget.delete(i, pos)
+        return "break"
+
+    def _excluir_palavra_seguinte(self, event):
+        widget = event.widget
+        texto = widget.get()
+        pos = widget.index(tk.INSERT)
+        n = len(texto)
+        i = pos
+        while i < n and texto[i] == " ":
+            i += 1
+        while i < n and texto[i] != " ":
+            i += 1
+        widget.delete(pos, i)
+        return "break"
+
     def _atualizar_combobox_sigla(self):
         empresas = db.listar_empresas_parceiras()
         self.combo_sigla["values"] = empresas
@@ -329,20 +464,40 @@ class App(tk.Tk):
         clientes = db.listar_clientes()
         sugestao = occ.sugerir_ocorrencia(texto, clientes)
         if sugestao and sugestao.lower() != texto.strip().lower():
-            self._suggestion_cliente_var.set("Sugestão: %s" % sugestao)
+            self._suggestion_cliente_var.set("Sugestão: %s (Enter/Tab para usar)" % sugestao)
+            self._sugestao_cliente_atual = sugestao
         else:
             self._suggestion_cliente_var.set("")
+            self._sugestao_cliente_atual = None
+
+    def _aceitar_sugestao_cliente(self, event=None):
+        if getattr(self, "_sugestao_cliente_atual", None):
+            self.var_cliente.set(self._sugestao_cliente_atual)
+            self.entry_cliente.icursor(tk.END)
+            self._suggestion_cliente_var.set("")
+            self._sugestao_cliente_atual = None
+        self._focar(self.entry_oc)
+        return "break"
 
     def _sugerir_ocorrencia(self, event=None):
         texto = self.var_ocorrencia.get()
         tipos = db.listar_tipos_ocorrencia()
         sugestao = occ.sugerir_ocorrencia(texto, tipos)
         if sugestao and sugestao.lower() != texto.strip().lower():
-            self._suggestion_var.set("Sugestão: %s (pressione Tab para usar)" % sugestao)
+            self._suggestion_var.set("Sugestão: %s (Enter/Tab para usar)" % sugestao)
             self._sugestao_atual = sugestao
         else:
             self._suggestion_var.set("")
             self._sugestao_atual = None
+
+    def _aceitar_sugestao_ocorrencia(self, event=None):
+        if getattr(self, "_sugestao_atual", None):
+            self.var_ocorrencia.set(self._sugestao_atual)
+            self.entry_oc.icursor(tk.END)
+            self._suggestion_var.set("")
+            self._sugestao_atual = None
+        self._focar(self.combo_sigla)
+        return "break"
 
     def _adicionar_nota(self):
         try:
@@ -433,6 +588,8 @@ class App(tk.Tk):
         self.var_data.set("0")
         self._suggestion_var.set("")
         self._suggestion_cliente_var.set("")
+        self._sugestao_atual = None
+        self._sugestao_cliente_atual = None
 
         self.recarregar_lista()
         self._focar(self.entry_nf)
@@ -529,8 +686,10 @@ class App(tk.Tk):
         frame.pack(fill="x", padx=10, pady=(4, 0))
         ttk.Label(frame, text="Filtrar por ocorrência:").pack(side="left")
         self.var_filtro = tk.StringVar(value=self.OPCAO_TODAS)
-        self.combo_filtro = ttk.Combobox(frame, textvariable=self.var_filtro, width=24, state="readonly")
+        self.combo_filtro = ttk.Combobox(frame, textvariable=self.var_filtro, width=24, state="normal")
         self.combo_filtro.pack(side="left", padx=6)
+        self.combo_filtro.bind("<KeyRelease>", self._filtrar_combo_ocorrencias)
+        self.combo_filtro.bind("<Return>", self._aplicar_filtro_digitado)
         self.combo_filtro.bind("<<ComboboxSelected>>", lambda e: self.recarregar_lista())
         self.btn_limpar_filtro = ttk.Button(frame, text="Limpar filtro", command=self._limpar_filtro)
         self.btn_limpar_filtro.pack(side="left")
@@ -546,6 +705,32 @@ class App(tk.Tk):
     def _atualizar_combobox_filtro(self):
         valores = [self.OPCAO_TODAS] + db.listar_tipos_ocorrencia()
         self.combo_filtro["values"] = valores
+
+    def _filtrar_combo_ocorrencias(self, event=None):
+        """Enquanto o usuario digita, estreita as opcoes do combobox de filtro
+        para agilizar a localizacao do tipo de ocorrencia desejado."""
+        if event is not None and event.keysym in ("Return", "Up", "Down", "Tab"):
+            return
+        texto = self.var_filtro.get().strip().lower()
+        tipos = [self.OPCAO_TODAS] + db.listar_tipos_ocorrencia()
+        if texto:
+            tipos = [t for t in tipos if texto in t.lower()]
+        self.combo_filtro["values"] = tipos
+
+    def _aplicar_filtro_digitado(self, event=None):
+        """Ao pressionar Enter no filtro, resolve o texto digitado para um tipo
+        de ocorrencia valido (ou 'Todas as ocorrencias') e aplica o filtro."""
+        texto = self.var_filtro.get().strip()
+        tipos = db.listar_tipos_ocorrencia()
+        if not texto or texto.lower() == self.OPCAO_TODAS.lower():
+            self.var_filtro.set(self.OPCAO_TODAS)
+        else:
+            sugestao = occ.sugerir_ocorrencia(texto, tipos)
+            if sugestao:
+                self.var_filtro.set(sugestao)
+        self._atualizar_combobox_filtro()
+        self.recarregar_lista()
+        return "break"
 
     def _limpar_filtro(self):
         self.var_filtro.set(self.OPCAO_TODAS)
@@ -618,14 +803,12 @@ class App(tk.Tk):
         nota = db.obter_nota(nota_id)
         if nota is None:
             return
-        dias = dias_em_tratativas(nota["criado_em"])
-        resultado = fluxo_marcar_resolvido(self, nota, dias)
+        resultado = fluxo_marcar_resolvido(self, nota)
         if resultado is None:
             return
         db.inserir_historico(
             resultado["nf_numero"], resultado["cliente"], resultado["ocorrencia"],
-            resultado["sigla"], resultado["dias_unidade"], resultado["unidade_agil"],
-            resultado["dias_remetente"], resultado["remetente_agil"],
+            resultado["sigla"], resultado["dias"], resultado["horas"], resultado["morosidade"],
         )
         db.marcar_resolvida(nota_id)
         self.recarregar_lista()

@@ -6,21 +6,21 @@ Janelas de dialogo (popups) reutilizaveis pela aplicacao principal.
 
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
-from datetime import datetime
 
 import dateutils
 
 
-class PerguntaSimNao(tk.Toplevel):
+class PerguntaMorosidade(tk.Toplevel):
     """
-    Popup generico de pergunta Sim/Nao.
-    Atalhos: Enter ou 'S' = Sim | 'N' ou Esc = Nao
-    Resultado fica em self.resultado (True / False / None se fechado sem responder)
+    Popup unico exibido ao marcar uma nota como resolvida: pergunta quem demorou
+    mais para resolver o caso.
+    Atalhos: 'U' = Unidade | 'C' = Cliente | Enter = Sem morosidade | Esc = cancela
+    Resultado fica em self.resultado: 'unidade' | 'cliente' | 'nenhum' | None (cancelado)
     """
 
-    def __init__(self, master, titulo, pergunta):
+    def __init__(self, master, nf, dias, horas):
         super().__init__(master)
-        self.title(titulo)
+        self.title("Resolução da NF %s" % nf)
         self.resizable(False, False)
         self.resultado = None
         self.grab_set()
@@ -28,104 +28,74 @@ class PerguntaSimNao(tk.Toplevel):
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill="both", expand=True)
 
-        ttk.Label(frame, text=pergunta, wraplength=380, justify="left").pack(pady=(0, 12))
+        partes_tempo = []
+        if dias:
+            partes_tempo.append("%d dia(s)" % dias)
+        partes_tempo.append("%d hora(s)" % horas)
+        tempo_str = " e ".join(partes_tempo)
+
+        ttk.Label(
+            frame,
+            text="A NF %s levou %s para ser resolvida.\nQuem demorou mais para resolver?"
+                 % (nf, tempo_str),
+            wraplength=380, justify="left"
+        ).pack(pady=(0, 12))
 
         botoes = ttk.Frame(frame)
         botoes.pack()
-        ttk.Button(botoes, text="Sim (S)", command=self._sim).pack(side="left", padx=6)
-        ttk.Button(botoes, text="Não (N)", command=self._nao).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Unidade (U)", command=self._unidade).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Cliente (C)", command=self._cliente).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Sem morosidade (Enter)", command=self._nenhum).pack(side="left", padx=6)
 
-        self.bind("<Return>", lambda e: self._sim())
-        self.bind("s", lambda e: self._sim())
-        self.bind("S", lambda e: self._sim())
-        self.bind("n", lambda e: self._nao())
-        self.bind("N", lambda e: self._nao())
-        self.bind("<Escape>", lambda e: self._nao())
+        self.bind("<Return>", lambda e: self._nenhum())
+        self.bind("u", lambda e: self._unidade())
+        self.bind("U", lambda e: self._unidade())
+        self.bind("c", lambda e: self._cliente())
+        self.bind("C", lambda e: self._cliente())
+        self.bind("<Escape>", self._cancelar)
 
-        self.protocol("WM_DELETE_WINDOW", self._nao)
+        self.protocol("WM_DELETE_WINDOW", lambda: self._cancelar())
         self.transient(master)
         self.update_idletasks()
-        self._centralizar(master)
+        self.geometry("+%d+%d" % (master.winfo_rootx() + 60, master.winfo_rooty() + 60))
         self.focus_force()
         self.wait_window(self)
 
-    def _centralizar(self, master):
-        self.geometry("+%d+%d" % (
-            master.winfo_rootx() + 60, master.winfo_rooty() + 60))
-
-    def _sim(self):
-        self.resultado = True
+    def _unidade(self):
+        self.resultado = "unidade"
         self.destroy()
 
-    def _nao(self):
-        self.resultado = False
+    def _cliente(self):
+        self.resultado = "cliente"
+        self.destroy()
+
+    def _nenhum(self):
+        self.resultado = "nenhum"
+        self.destroy()
+
+    def _cancelar(self, event=None):
+        self.resultado = None
         self.destroy()
 
 
-def perguntar_dias_no_sistema(master, titulo, texto_padrao):
-    """Pede ao usuario para confirmar/informar a quantidade de dias em tratativas."""
-    return simpledialog.askinteger(titulo, texto_padrao, parent=master, minvalue=0)
-
-
-def fluxo_marcar_resolvido(master, nota_row, dias_em_tratativas):
+def fluxo_marcar_resolvido(master, nota_row):
     """
-    Executa o fluxo completo de 'Marcar como resolvido' descrito no requisito:
-    1) Unidade entregadora foi agil?
-    2) Se nao, perguntar/confirmar quantidade de dias.
-    3) Remetente foi agil?
-    4) Se nao, perguntar/confirmar quantidade de dias e registrar no relatorio o nome
-       do cliente e os dias que levou para auxiliar na solucao.
+    Executa o fluxo de 'Marcar como resolvido': calcula automaticamente os dias e
+    horas que a NF ficou em tratativas (sem perguntar ao usuario) e pergunta apenas
+    quem demorou mais para resolver o caso (unidade, cliente ou ninguem).
 
     Retorna dict com os dados para salvar no historico, ou None se o usuario cancelar.
     """
     nf = nota_row["nf_numero"]
-    cliente = nota_row["cliente"]
-    ocorrencia = nota_row["ocorrencia"]
-    sigla = nota_row["sigla"]
+    dias, horas = dateutils.calcular_dias_horas(nota_row["criado_em"])
 
-    p1 = PerguntaSimNao(
-        master, "Resolução da NF %s" % nf,
-        "A unidade entregadora (%s) foi ágil na resolução do problema da NF %s?" % (sigla, nf)
-    )
-    if p1.resultado is None:
+    popup = PerguntaMorosidade(master, nf, dias, horas)
+    if popup.resultado is None:
         return None
-    unidade_agil = p1.resultado
-    if unidade_agil:
-        dias_unidade = dias_em_tratativas
-    else:
-        dias_unidade = perguntar_dias_no_sistema(
-            master, "Dias em tratativas",
-            "Confirme quantos dias a NF %s ficou em tratativas com a unidade %s:" % (nf, sigla)
-        )
-        if dias_unidade is None:
-            dias_unidade = dias_em_tratativas
-
-    p2 = PerguntaSimNao(
-        master, "Resolução da NF %s" % nf,
-        "O remetente (%s) foi ágil na solução do caso?" % cliente
-    )
-    if p2.resultado is None:
-        return None
-    remetente_agil = p2.resultado
-    if remetente_agil:
-        dias_remetente = dias_em_tratativas
-    else:
-        dias_remetente = perguntar_dias_no_sistema(
-            master, "Dias em tratativas",
-            "Confirme quantos dias o cliente %s levou para auxiliar na solução do problema:" % cliente
-        )
-        if dias_remetente is None:
-            dias_remetente = dias_em_tratativas
-        messagebox.showinfo(
-            "Relatório atualizado",
-            "O cliente %s levou %d dia(s) para auxiliar na solução do problema."
-            % (cliente, dias_remetente)
-        )
 
     return {
-        "nf_numero": nf, "cliente": cliente, "ocorrencia": ocorrencia, "sigla": sigla,
-        "dias_unidade": dias_unidade, "unidade_agil": unidade_agil,
-        "dias_remetente": dias_remetente, "remetente_agil": remetente_agil,
+        "nf_numero": nf, "cliente": nota_row["cliente"], "ocorrencia": nota_row["ocorrencia"],
+        "sigla": nota_row["sigla"], "dias": dias, "horas": horas, "morosidade": popup.resultado,
     }
 
 

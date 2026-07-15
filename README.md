@@ -20,9 +20,9 @@ python main.py
 ```
 
 Na primeira execução, o sistema cria automaticamente o arquivo `sac_logistica.db`
-(SQLite) na mesma pasta do programa, já com as ocorrências padrão (Reentrega,
-Mudou-se, Localização, Acompanhar, Comprovante, Priorizar entrega, Agendamento,
-Outros) e as empresas parceiras padrão (Agex, Risso) cadastradas.
+(SQLite) na mesma pasta do programa, já com as ocorrências padrão (REENTREGA,
+MUDOU-SE, LOCALIZAÇÃO, ACOMPANHAR, COMPROVANTE, PRIORIZAR ENTREGA, AGENDAMENTO,
+DEVOLUÇÃO, OUTROS) e as empresas parceiras padrão (Agex, Risso) cadastradas.
 
 ## Gerando um .exe para Windows (opcional)
 
@@ -63,12 +63,19 @@ ao lado do `.exe` na primeira execução.
   adicionar uma nova atualização de tratativa.
 - Menu de contexto (botão direito): marcar como resolvido, adicionar/remover
   lembrete, editar NF, remetente, ocorrência e sigla.
-- Fluxo de "marcar como resolvido": pergunta se a unidade entregadora foi ágil
-  e, em seguida, se o remetente foi ágil, salvando os dias de tratativa no
-  histórico/relatório (histórico com expiração automática de 60 dias, além de
-  poder ser apagado manualmente na tela de Relatório).
-- Relatório com "Unidades/siglas com mais ocorrências" e "Tempo médio para
-  solução do caso".
+- Fluxo de "marcar como resolvido": o sistema calcula automaticamente os dias
+  e horas que a NF ficou em tratativas (sem perguntar nada disso ao usuário)
+  e pergunta apenas quem demorou mais para resolver o caso — Unidade
+  (clique ou tecla `U`), Cliente (clique ou tecla `C`) ou Sem morosidade
+  (`Enter`). O resultado é salvo no histórico (expiração automática de 60
+  dias, podendo também ser apagado manualmente na tela de Relatório).
+- Relatório com: **Unidades com mais ocorrências** (top 5, da maior para a
+  menor), **Tempo médio para solução do caso** (em dias e horas),
+  **Unidades mais morosas** (top 5, da mais para a menos morosa) e
+  **Clientes mais morosos** (top 5). A tela de Relatório também permite
+  **buscar no histórico pelo número da NF**, mostrando todas as vezes em que
+  aquela NF foi resolvida, com o tempo (dias e horas) e quem foi apontado
+  como mais moroso em cada caso.
 - Cadastro de novos tipos de ocorrência, tanto ao digitar uma ocorrência não
   reconhecida (o sistema pergunta se deseja cadastrá-la) quanto pela tela
   **Cadastros → Tipos de ocorrência**.
@@ -126,7 +133,19 @@ ao lado do `.exe` na primeira execução.
 - Cliente/remetente, ocorrência e sigla/empresa são sempre convertidos para
   LETRAS MAIÚSCULAS automaticamente ao cadastrar uma nova nota, editar um
   campo existente ou cadastrar um novo tipo de ocorrência/remetente/empresa
-  parceira pelas telas de Cadastros.
+  parceira pelas telas de Cadastros. Todos os tipos de ocorrência já
+  cadastrados anteriormente (inclusive os personalizados) são convertidos
+  automaticamente para maiúsculas na primeira execução após esta atualização.
+- Atalhos de edição de texto nos campos NF, Cliente, Ocorrência, Sigla/Empresa,
+  Data, Buscar NF e Filtrar por ocorrência: `Ctrl+Z` desfaz a última alteração,
+  `Ctrl+Y` refaz, `Ctrl+Backspace` apaga a palavra anterior ao cursor e
+  `Ctrl+Delete` apaga a palavra seguinte.
+- Ao digitar uma ocorrência ou um remetente já cadastrado, a sugestão exibida
+  agora é colada automaticamente no campo ao pressionar `Enter` ou `Tab`
+  (antes de avançar para o próximo campo).
+- O campo "Filtrar por ocorrência" agora é digitável: conforme o usuário
+  digita, a lista de opções do combobox é reduzida aos tipos correspondentes,
+  agilizando a localização do tipo desejado; `Enter` aplica o filtro.
 
 ## Observações e simplificações assumidas
 
@@ -144,10 +163,11 @@ conforme necessário:
    fixos às 10h/17h para a ocorrência "prioridade". O sistema trata ambos os
    nomes como sinônimos e aplica tanto o lembrete configurável quanto o
    alerta fixo de 10h/17h.
-3. A quantidade de "dias em tratativas" é calculada automaticamente a partir
-   da data de inserção da nota; ao marcar como resolvido, esse valor é
-   sugerido e pode ser confirmado/ajustado pelo usuário quando a resposta for
-   "não" (não ágil).
+3. Os "dias e horas em tratativas" salvos no histórico ao marcar uma nota como
+   resolvida são sempre calculados automaticamente a partir da data/hora de
+   inserção da nota até o momento da resolução — o sistema não pergunta mais
+   esse valor ao usuário, apenas quem foi mais moroso (unidade, cliente ou
+   ninguém).
 4. O histórico de 60 dias é limpo automaticamente a cada abertura do sistema e
    a cada abertura da tela de Relatório, além de poder ser apagado
    manualmente a qualquer momento.
