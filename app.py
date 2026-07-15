@@ -47,6 +47,7 @@ class NotaBlock(ttk.Frame):
     def _montar(self):
         for widget in self.winfo_children():
             widget.destroy()
+        self._labels_texto = []
 
         nota = self.nota_row
         dias = dias_em_tratativas(nota["criado_em"])
@@ -67,12 +68,16 @@ class NotaBlock(ttk.Frame):
             agendamento=agendamento_txt,
         )
 
+        largura_atual = self.app.obter_largura_lista()
+
         self.lbl_cabecalho = tk.Label(self, text=cabecalho, anchor="w", justify="left",
-                                       font=("Consolas", 9, "bold"), cursor="hand2", wraplength=760)
+                                       font=("Consolas", 9, "bold"), cursor="hand2",
+                                       wraplength=largura_atual)
         self.lbl_cabecalho.pack(fill="x")
         self.lbl_cabecalho.bind("<Button-1>", self._copiar_nf)
         self.lbl_cabecalho.bind("<Button-3>", self._abrir_menu)
         self.lbl_cabecalho.bind("<Double-Button-1>", self._adicionar_tratativa)
+        self._labels_texto.append(self.lbl_cabecalho)
 
         separador = tk.Label(self, text="=" * 90, anchor="w", font=("Consolas", 7))
         separador.pack(fill="x")
@@ -83,11 +88,12 @@ class NotaBlock(ttk.Frame):
         self.frame_tratativas.bind("<Button-1>", self._selecionar)
         for t in db.listar_tratativas(self.nota_id):
             linha = tk.Label(self.frame_tratativas, text="%s: %s" % (t["timestamp"], t["texto"]),
-                              anchor="w", justify="left", font=("Consolas", 9), wraplength=760)
+                              anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual)
             linha.pack(fill="x")
             linha.bind("<Button-1>", self._selecionar)
             linha.bind("<Double-Button-1>", self._adicionar_tratativa)
             linha.bind("<Button-3>", self._abrir_menu)
+            self._labels_texto.append(linha)
 
         self.bind("<Button-1>", self._selecionar)
         self.bind("<Button-3>", self._abrir_menu)
@@ -95,6 +101,10 @@ class NotaBlock(ttk.Frame):
 
         if self.app.nota_selecionada_id == self.nota_id:
             self.lbl_cabecalho.configure(background="#cfe8ff")
+
+    def atualizar_largura(self, largura):
+        for lbl in getattr(self, "_labels_texto", []):
+            lbl.configure(wraplength=max(largura, 200))
 
     def _selecionar(self, event=None):
         self.app.selecionar_nota(self.nota_id)
@@ -147,12 +157,14 @@ class App(tk.Tk):
         super().__init__()
         self.title("Auxiliador de Processos Logísticos - SAC")
         self.geometry("920x680")
+        self.minsize(480, 400)
 
         db.init_db()
         db.limpar_historico_expirado(60)
 
         self.blocos = {}  # nota_id -> NotaBlock
         self.nota_selecionada_id = None
+        self._largura_lista_atual = 720
         self._suggestion_var = tk.StringVar(value="")
 
         self._montar_menu()
@@ -219,7 +231,12 @@ class App(tk.Tk):
         ttk.Label(frame, text="Unidades com mais ocorrências (top 5):",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
         for sigla, total in dados["siglas_mais_ocorrencias"]:
-            ttk.Label(frame, text="  %s — %d ocorrência(s)" % (sigla, total)).pack(anchor="w")
+            lbl = tk.Label(frame, text="  %s — %d ocorrência(s)" % (sigla, total),
+                            fg="#0645AD", cursor="hand2")
+            lbl.pack(anchor="w")
+            lbl.bind("<Button-1>", lambda e, s=sigla: self._mostrar_detalhes_historico(
+                "Notas da unidade %s (mais ocorrências)" % s,
+                db.buscar_historico_por_sigla(s)))
         if not dados["siglas_mais_ocorrencias"]:
             ttk.Label(frame, text="  (sem dados no histórico)").pack(anchor="w")
 
@@ -233,7 +250,12 @@ class App(tk.Tk):
         ttk.Label(frame, text="Unidades mais morosas (top 5):",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
         for sigla, total in dados["unidades_mais_morosas"]:
-            ttk.Label(frame, text="  %s — %d vez(es)" % (sigla, total)).pack(anchor="w")
+            lbl = tk.Label(frame, text="  %s — %d vez(es)" % (sigla, total),
+                            fg="#0645AD", cursor="hand2")
+            lbl.pack(anchor="w")
+            lbl.bind("<Button-1>", lambda e, s=sigla: self._mostrar_detalhes_historico(
+                "Notas da unidade %s (mais morosa)" % s,
+                db.buscar_historico_por_sigla(s, somente_morosidade_unidade=True)))
         if not dados["unidades_mais_morosas"]:
             ttk.Label(frame, text="  (sem dados no histórico)").pack(anchor="w")
 
@@ -267,17 +289,9 @@ class App(tk.Tk):
             if not encontrados:
                 ttk.Label(resultado_frame, text="Nenhum registro encontrado no histórico.").pack(anchor="w")
                 return
-            morosidade_txt = {"unidade": "Unidade", "cliente": "Cliente", "nenhum": "Sem morosidade"}
             for h in encontrados:
-                texto_linha = (
-                    "NF %s / %s / Ocorrência: %s / Sigla: %s / Tempo: %d dia(s) e %d hora(s) / "
-                    "Morosidade: %s / Resolvida em: %s"
-                ) % (
-                    h["nf_numero"], h["cliente"], h["ocorrencia"], h["sigla"], h["dias"], h["horas"],
-                    morosidade_txt.get(h["morosidade"], "-"), h["resolvido_em"][:16].replace("T", " "),
-                )
-                ttk.Label(resultado_frame, text=texto_linha, wraplength=440, justify="left").pack(
-                    anchor="w", pady=2)
+                ttk.Label(resultado_frame, text=self._formatar_linha_historico(h),
+                          wraplength=440, justify="left").pack(anchor="w", pady=2)
 
         entry_nf_hist.bind("<Return>", buscar_no_historico)
         ttk.Button(linha_busca, text="Buscar", command=buscar_no_historico).pack(side="left", padx=(6, 0))
@@ -292,22 +306,60 @@ class App(tk.Tk):
             janela.destroy()
             self._abrir_relatorio()
 
+    def _formatar_linha_historico(self, h):
+        morosidade_txt = {"unidade": "Unidade", "cliente": "Cliente", "nenhum": "Sem morosidade"}
+        return (
+            "NF %s / %s / Ocorrência: %s / Sigla: %s / Tempo: %d dia(s) e %d hora(s) / "
+            "Morosidade: %s / Resolvida em: %s"
+        ) % (
+            h["nf_numero"], h["cliente"], h["ocorrencia"], h["sigla"], h["dias"], h["horas"],
+            morosidade_txt.get(h["morosidade"], "-"), h["resolvido_em"][:16].replace("T", " "),
+        )
+
+    def _mostrar_detalhes_historico(self, titulo, registros):
+        """Mostra as notas do histórico que embasam um item clicado no top 5
+        do relatório (unidade com mais ocorrências ou unidade mais morosa)."""
+        janela = tk.Toplevel(self)
+        janela.title(titulo)
+        janela.geometry("480x360")
+        frame = ttk.Frame(janela, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=titulo, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
+
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        interior = ttk.Frame(canvas)
+        interior.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=interior, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        if not registros:
+            ttk.Label(interior, text="Nenhum registro encontrado.").pack(anchor="w")
+            return
+        for h in registros:
+            ttk.Label(interior, text=self._formatar_linha_historico(h),
+                      wraplength=420, justify="left").pack(anchor="w", pady=2)
+
     # ------------------------------------------------------------------
     # Formulario de insercao de nota
     # ------------------------------------------------------------------
     def _montar_formulario(self):
         frame = ttk.LabelFrame(self, text="Nova nota / ocorrência", padding=10)
         frame.pack(fill="x", padx=10, pady=(10, 4))
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
 
         ttk.Label(frame, text="NF:").grid(row=0, column=0, sticky="w")
         self.var_nf = tk.StringVar()
         self.entry_nf = ttk.Entry(frame, textvariable=self.var_nf, width=12)
-        self.entry_nf.grid(row=0, column=1, padx=4)
+        self.entry_nf.grid(row=0, column=1, padx=4, sticky="ew")
 
         ttk.Label(frame, text="Cliente/Remetente:").grid(row=0, column=2, sticky="w")
         self.var_cliente = tk.StringVar()
         self.entry_cliente = ttk.Entry(frame, textvariable=self.var_cliente, width=20)
-        self.entry_cliente.grid(row=0, column=3, padx=4)
+        self.entry_cliente.grid(row=0, column=3, padx=4, sticky="ew")
         self.entry_cliente.bind("<KeyRelease>", self._sugerir_cliente)
         self._suggestion_cliente_var = tk.StringVar(value="")
         ttk.Label(frame, textvariable=self._suggestion_cliente_var, foreground="#555").grid(
@@ -316,7 +368,7 @@ class App(tk.Tk):
         ttk.Label(frame, text="Ocorrência:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.var_ocorrencia = tk.StringVar()
         self.entry_oc = ttk.Entry(frame, textvariable=self.var_ocorrencia, width=20)
-        self.entry_oc.grid(row=1, column=1, padx=4, pady=(6, 0))
+        self.entry_oc.grid(row=1, column=1, padx=4, pady=(6, 0), sticky="ew")
         self.entry_oc.bind("<KeyRelease>", self._sugerir_ocorrencia)
         self.lbl_sugestao = ttk.Label(frame, textvariable=self._suggestion_var, foreground="#555")
         self.lbl_sugestao.grid(row=2, column=1, sticky="w")
@@ -324,13 +376,13 @@ class App(tk.Tk):
         ttk.Label(frame, text="Sigla/Empresa:").grid(row=1, column=2, sticky="w", pady=(6, 0))
         self.var_sigla = tk.StringVar()
         self.combo_sigla = ttk.Combobox(frame, textvariable=self.var_sigla, width=18)
-        self.combo_sigla.grid(row=1, column=3, padx=4, pady=(6, 0))
+        self.combo_sigla.grid(row=1, column=3, padx=4, pady=(6, 0), sticky="ew")
         self._atualizar_combobox_sigla()
 
         ttk.Label(frame, text="Data (0=hoje, dia ou ddmmaaaa):").grid(row=3, column=0, sticky="w", pady=(6, 0))
         self.var_data = tk.StringVar(value="0")
         self.entry_data = ttk.Entry(frame, textvariable=self.var_data, width=12)
-        self.entry_data.grid(row=3, column=1, padx=4, pady=(6, 0))
+        self.entry_data.grid(row=3, column=1, padx=4, pady=(6, 0), sticky="ew")
 
         self.btn_adicionar = ttk.Button(frame, text="Adicionar nota", command=self._adicionar_nota)
         self.btn_adicionar.grid(row=3, column=3, sticky="e", pady=(6, 0))
@@ -600,13 +652,14 @@ class App(tk.Tk):
     def _montar_busca(self):
         frame = ttk.Frame(self)
         frame.pack(fill="x", padx=10)
-        ttk.Label(frame, text="Buscar NF (Ctrl+F):").pack(side="left")
+        frame.columnconfigure(1, weight=1)
+        ttk.Label(frame, text="Buscar NF (Ctrl+F):").grid(row=0, column=0, sticky="w")
         self.var_busca = tk.StringVar()
         self.entry_busca = ttk.Entry(frame, textvariable=self.var_busca, width=20)
-        self.entry_busca.pack(side="left", padx=6)
+        self.entry_busca.grid(row=0, column=1, padx=6, sticky="ew")
         self.entry_busca.bind("<Return>", self._executar_busca)
         self.btn_buscar = ttk.Button(frame, text="Buscar", command=self._executar_busca)
-        self.btn_buscar.pack(side="left")
+        self.btn_buscar.grid(row=0, column=2, sticky="e")
 
     def _focar_busca(self, event=None):
         self.entry_busca.focus_set()
@@ -684,21 +737,23 @@ class App(tk.Tk):
     def _montar_filtro(self):
         frame = ttk.Frame(self)
         frame.pack(fill="x", padx=10, pady=(4, 0))
-        ttk.Label(frame, text="Filtrar por ocorrência:").pack(side="left")
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Filtrar por ocorrência:").grid(row=0, column=0, sticky="w")
         self.var_filtro = tk.StringVar(value=self.OPCAO_TODAS)
         self.combo_filtro = ttk.Combobox(frame, textvariable=self.var_filtro, width=24, state="normal")
-        self.combo_filtro.pack(side="left", padx=6)
+        self.combo_filtro.grid(row=0, column=1, padx=6, sticky="ew")
         self.combo_filtro.bind("<KeyRelease>", self._filtrar_combo_ocorrencias)
         self.combo_filtro.bind("<Return>", self._aplicar_filtro_digitado)
         self.combo_filtro.bind("<<ComboboxSelected>>", lambda e: self.recarregar_lista())
         self.btn_limpar_filtro = ttk.Button(frame, text="Limpar filtro", command=self._limpar_filtro)
-        self.btn_limpar_filtro.pack(side="left")
+        self.btn_limpar_filtro.grid(row=0, column=2, sticky="e")
 
         self.var_somente_lembrete = tk.BooleanVar(value=False)
         self.chk_somente_lembrete = ttk.Checkbutton(
             frame, text="Somente notas com lembrete", variable=self.var_somente_lembrete,
             command=self.recarregar_lista)
-        self.chk_somente_lembrete.pack(side="left", padx=(16, 0))
+        self.chk_somente_lembrete.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         self._atualizar_combobox_filtro()
 
@@ -750,11 +805,14 @@ class App(tk.Tk):
 
         self.frame_lista.bind(
             "<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.frame_lista, anchor="nw")
+        self._frame_lista_janela = self.canvas.create_window((0, 0), window=self.frame_lista, anchor="nw")
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
         self.canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+        self._largura_lista_atual = 760
+        self.canvas.bind("<Configure>", self._ao_redimensionar_lista)
 
         self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-e.delta / 120), "units"))
 
@@ -762,6 +820,18 @@ class App(tk.Tk):
         self.canvas.bind("<Down>", lambda e: self._mover_selecao(1))
         self.canvas.bind("<Delete>", lambda e: self._resolver_via_teclado())
         self.canvas.bind("<Return>", lambda e: self._adicionar_tratativa_via_teclado())
+
+    def _ao_redimensionar_lista(self, event):
+        """Mantem o conteudo da lista de notas ajustado a largura da janela,
+        para que o texto dos blocos quebre a linha corretamente em vez de
+        ficar cortado quando a janela e estreitada."""
+        self.canvas.itemconfig(self._frame_lista_janela, width=event.width)
+        self._largura_lista_atual = max(event.width - 24, 200)
+        for bloco in self.blocos.values():
+            bloco.atualizar_largura(self._largura_lista_atual)
+
+    def obter_largura_lista(self):
+        return getattr(self, "_largura_lista_atual", 760)
 
     def recarregar_lista(self):
         for widget in self.frame_lista.winfo_children():

@@ -76,6 +76,16 @@ ao lado do `.exe` na primeira execução.
   **buscar no histórico pelo número da NF**, mostrando todas as vezes em que
   aquela NF foi resolvida, com o tempo (dias e horas) e quem foi apontado
   como mais moroso em cada caso.
+- Cada sigla listada nos rankings "Unidades com mais ocorrências" e
+  "Unidades mais morosas" é clicável: um clique abre a lista das notas do
+  histórico que embasam aquela posição no ranking (no caso das mais
+  morosas, somente as notas em que aquela unidade foi apontada como a mais
+  demorada).
+- Interface responsiva: a lista de notas (incluindo o texto de cada bloco e
+  das atualizações de tratativa) se reajusta automaticamente à largura da
+  janela, quebrando as linhas de forma legível mesmo quando a janela é
+  estreitada. O formulário de cadastro, a busca e os filtros também se
+  ajustam à largura disponível.
 - Cadastro de novos tipos de ocorrência, tanto ao digitar uma ocorrência não
   reconhecida (o sistema pergunta se deseja cadastrá-la) quanto pela tela
   **Cadastros → Tipos de ocorrência**.
