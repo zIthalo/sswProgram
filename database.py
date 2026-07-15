@@ -89,10 +89,9 @@ def init_db():
             cliente TEXT NOT NULL,
             ocorrencia TEXT NOT NULL,
             sigla TEXT NOT NULL,
-            dias_unidade INTEGER,
-            unidade_agil INTEGER,
-            dias_remetente INTEGER,
-            remetente_agil INTEGER,
+            dias INTEGER NOT NULL,
+            horas INTEGER NOT NULL,
+            morosidade TEXT NOT NULL,   -- 'unidade' | 'cliente' | 'nenhum'
             resolvido_em TEXT NOT NULL   -- timestamp ISO, usado p/ expirar em 60 dias
         )
     """)
@@ -109,9 +108,30 @@ def init_db():
 
     conn.commit()
 
-    # Popular ocorrencias padrao (built-in) se ainda nao existirem
-    built_in = ["Reentrega", "Mudou-se", "Localização", "Acompanhar",
-                "Comprovante", "Priorizar entrega", "Agendamento", "Devolução", "Outros"]
+    # Migracao: se a tabela historico for de uma versao anterior do sistema (sem a
+    # coluna 'morosidade'), recria com o novo formato (dias/horas/morosidade).
+    cur.execute("PRAGMA table_info(historico)")
+    colunas = [c["name"] for c in cur.fetchall()]
+    if "morosidade" not in colunas:
+        cur.execute("DROP TABLE historico")
+        cur.execute("""
+            CREATE TABLE historico (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nf_numero INTEGER NOT NULL,
+                cliente TEXT NOT NULL,
+                ocorrencia TEXT NOT NULL,
+                sigla TEXT NOT NULL,
+                dias INTEGER NOT NULL,
+                horas INTEGER NOT NULL,
+                morosidade TEXT NOT NULL,
+                resolvido_em TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+    # Popular ocorrencias padrao (built-in) se ainda nao existirem (em maiusculas)
+    built_in = ["REENTREGA", "MUDOU-SE", "LOCALIZAÇÃO", "ACOMPANHAR",
+                "COMPROVANTE", "PRIORIZAR ENTREGA", "AGENDAMENTO", "DEVOLUÇÃO", "OUTROS"]
     for nome in built_in:
         try:
             cur.execute("INSERT INTO ocorrencias_tipos (nome, built_in) VALUES (?, 1)", (nome,))
@@ -126,7 +146,29 @@ def init_db():
             pass
 
     conn.commit()
+
+    # Migracao: converte todos os tipos de ocorrencia ja cadastrados (inclusive
+    # customizados criados pelo usuario) e as ocorrencias ja gravadas em notas
+    # e no historico para letras maiusculas.
+    _migrar_ocorrencias_maiusculas(cur)
+    conn.commit()
     conn.close()
+
+
+def _migrar_ocorrencias_maiusculas(cur):
+    cur.execute("SELECT id, nome FROM ocorrencias_tipos")
+    linhas = cur.fetchall()
+    vistos = set()
+    for r in linhas:
+        maiusc = r["nome"].upper()
+        if maiusc in vistos:
+            cur.execute("DELETE FROM ocorrencias_tipos WHERE id=?", (r["id"],))
+        else:
+            vistos.add(maiusc)
+            if maiusc != r["nome"]:
+                cur.execute("UPDATE ocorrencias_tipos SET nome=? WHERE id=?", (maiusc, r["id"]))
+    cur.execute("UPDATE notas SET ocorrencia = UPPER(ocorrencia)")
+    cur.execute("UPDATE historico SET ocorrencia = UPPER(ocorrencia)")
 
 
 # ---------------------------------------------------------------------------
@@ -332,18 +374,24 @@ def remover_tipo_ocorrencia(nome):
 # Historico / Relatorio
 # ---------------------------------------------------------------------------
 
-def inserir_historico(nf_numero, cliente, ocorrencia, sigla,
-                       dias_unidade, unidade_agil, dias_remetente, remetente_agil):
+def inserir_historico(nf_numero, cliente, ocorrencia, sigla, dias, horas, morosidade):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO historico (nf_numero, cliente, ocorrencia, sigla, dias_unidade,
-                                unidade_agil, dias_remetente, remetente_agil, resolvido_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (nf_numero, cliente, ocorrencia, sigla, dias_unidade, int(unidade_agil),
-          dias_remetente, int(remetente_agil), datetime.now().isoformat()))
+        INSERT INTO historico (nf_numero, cliente, ocorrencia, sigla, dias, horas, morosidade, resolvido_em)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (nf_numero, cliente, ocorrencia, sigla, dias, horas, morosidade, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+
+def buscar_historico_por_nf(nf_numero):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM historico WHERE nf_numero=? ORDER BY resolvido_em DESC", (nf_numero,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
 def limpar_historico_expirado(dias=60):
@@ -381,27 +429,42 @@ def listar_historico():
 
 
 def gerar_relatorio():
-    """Retorna dict com: siglas_mais_ocorrencias (lista de tuplas) e tempo_medio_solucao (float dias)."""
+    """Retorna dict com os dados exibidos na tela de Relatorio (top 5 em cada lista)."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT sigla, COUNT(*) as total FROM historico GROUP BY sigla ORDER BY total DESC
-    """)
-    siglas = [(r["sigla"], r["total"]) for r in cur.fetchall()]
 
-    cur.execute("SELECT dias_unidade, dias_remetente FROM historico")
+    cur.execute("""
+        SELECT sigla, COUNT(*) as total FROM historico
+        GROUP BY sigla ORDER BY total DESC LIMIT 5
+    """)
+    siglas_mais_ocorrencias = [(r["sigla"], r["total"]) for r in cur.fetchall()]
+
+    cur.execute("""
+        SELECT sigla, COUNT(*) as total FROM historico
+        WHERE morosidade='unidade' GROUP BY sigla ORDER BY total DESC LIMIT 5
+    """)
+    unidades_mais_morosas = [(r["sigla"], r["total"]) for r in cur.fetchall()]
+
+    cur.execute("""
+        SELECT cliente, COUNT(*) as total FROM historico
+        WHERE morosidade='cliente' GROUP BY cliente ORDER BY total DESC LIMIT 5
+    """)
+    clientes_mais_morosos = [(r["cliente"], r["total"]) for r in cur.fetchall()]
+
+    cur.execute("SELECT dias, horas FROM historico")
     rows = cur.fetchall()
     conn.close()
 
-    dias_totais = []
-    for r in rows:
-        if r["dias_unidade"] is not None:
-            dias_totais.append(r["dias_unidade"])
-        if r["dias_remetente"] is not None:
-            dias_totais.append(r["dias_remetente"])
+    horas_totais = [(r["dias"] or 0) * 24 + (r["horas"] or 0) for r in rows]
+    media_horas = sum(horas_totais) / len(horas_totais) if horas_totais else 0.0
 
-    media = sum(dias_totais) / len(dias_totais) if dias_totais else 0.0
-    return {"siglas_mais_ocorrencias": siglas, "tempo_medio_solucao": media}
+    return {
+        "siglas_mais_ocorrencias": siglas_mais_ocorrencias,
+        "unidades_mais_morosas": unidades_mais_morosas,
+        "clientes_mais_morosos": clientes_mais_morosos,
+        "tempo_medio_dias": int(media_horas // 24),
+        "tempo_medio_horas": int(round(media_horas % 24)),
+    }
 
 
 # ---------------------------------------------------------------------------

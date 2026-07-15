@@ -54,6 +54,20 @@ def data_str_para_datetime(data_str):
     return datetime.strptime(data_str, FORMATO)
 
 
+def calcular_dias_horas(criado_em_iso, referencia=None):
+    """Calcula quantos dias e horas (cheios) se passaram entre criado_em_iso e agora."""
+    if referencia is None:
+        referencia = datetime.now()
+    try:
+        criado = datetime.fromisoformat(criado_em_iso)
+    except (ValueError, TypeError):
+        return 0, 0
+    delta = referencia - criado
+    dias = max(delta.days, 0)
+    horas = delta.seconds // 3600
+    return dias, horas
+
+
 def formatar_data_exibicao(data_str):
     """Converte a data armazenada (ddmmyyyy) para exibição no formato dd/mm/aaaa."""
     try:

@@ -5,8 +5,8 @@ Constantes de negocio e logica de autocomplete de ocorrencias.
 """
 
 OCORRENCIAS_PADRAO = [
-    "Reentrega", "Mudou-se", "Localização", "Acompanhar",
-    "Comprovante", "Priorizar entrega", "Agendamento", "Devolução", "Outros",
+    "REENTREGA", "MUDOU-SE", "LOCALIZAÇÃO", "ACOMPANHAR",
+    "COMPROVANTE", "PRIORIZAR ENTREGA", "AGENDAMENTO", "DEVOLUÇÃO", "OUTROS",
 ]
 
 # Ocorrencias que disparam a sugestao de lembrete periodico logo apos a insercao da nota
