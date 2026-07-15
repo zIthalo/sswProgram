@@ -394,6 +394,24 @@ def buscar_historico_por_nf(nf_numero):
     return rows
 
 
+def buscar_historico_por_sigla(sigla, somente_morosidade_unidade=False):
+    """Retorna os registros do historico de uma sigla/unidade, usados como
+    embasamento dos itens clicaveis do top 5 no relatorio. Quando
+    somente_morosidade_unidade=True, traz apenas os casos em que essa unidade
+    foi apontada como a mais morosa."""
+    conn = get_connection()
+    cur = conn.cursor()
+    if somente_morosidade_unidade:
+        cur.execute(
+            "SELECT * FROM historico WHERE sigla=? AND morosidade='unidade' ORDER BY resolvido_em DESC",
+            (sigla,))
+    else:
+        cur.execute("SELECT * FROM historico WHERE sigla=? ORDER BY resolvido_em DESC", (sigla,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 def limpar_historico_expirado(dias=60):
     conn = get_connection()
     cur = conn.cursor()
