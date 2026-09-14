@@ -10,6 +10,8 @@ import os
 import sys
 from datetime import datetime
 
+import occorrencias as occ
+
 DB_NAME = "sac_logistica.db"
 
 
@@ -152,6 +154,12 @@ def init_db():
     # e no historico para letras maiusculas.
     _migrar_ocorrencias_maiusculas(cur)
     conn.commit()
+
+    # Migracao: garante que so existam as categorias oficiais de ocorrencia;
+    # qualquer tipo personalizado e qualquer ocorrencia gravada que nao seja
+    # uma das categorias oficiais e reclassificada como OUTROS.
+    _migrar_categorias_oficiais(cur)
+    conn.commit()
     conn.close()
 
 
@@ -169,6 +177,23 @@ def _migrar_ocorrencias_maiusculas(cur):
                 cur.execute("UPDATE ocorrencias_tipos SET nome=? WHERE id=?", (maiusc, r["id"]))
     cur.execute("UPDATE notas SET ocorrencia = UPPER(ocorrencia)")
     cur.execute("UPDATE historico SET ocorrencia = UPPER(ocorrencia)")
+
+
+def _migrar_categorias_oficiais(cur):
+    oficiais = set(occ.OCORRENCIAS_PADRAO)
+
+    # Remove tipos personalizados do catalogo: as categorias de ocorrencia
+    # agora sao fixas (as oficiais + OUTROS).
+    cur.execute("DELETE FROM ocorrencias_tipos WHERE built_in=0")
+
+    # Reclassifica como OUTROS qualquer ocorrencia ja gravada que nao seja
+    # uma categoria oficial.
+    for tabela in ("notas", "historico"):
+        cur.execute("SELECT id, ocorrencia FROM %s" % tabela)
+        for r in cur.fetchall():
+            if r["ocorrencia"] not in oficiais:
+                nova = occ.normalizar_ocorrencia(r["ocorrencia"])
+                cur.execute("UPDATE %s SET ocorrencia=? WHERE id=?" % tabela, (nova, r["id"]))
 
 
 # ---------------------------------------------------------------------------

@@ -86,9 +86,23 @@ ao lado do `.exe` na primeira execução.
   janela, quebrando as linhas de forma legível mesmo quando a janela é
   estreitada. O formulário de cadastro, a busca e os filtros também se
   ajustam à largura disponível.
-- Cadastro de novos tipos de ocorrência, tanto ao digitar uma ocorrência não
-  reconhecida (o sistema pergunta se deseja cadastrá-la) quanto pela tela
-  **Cadastros → Tipos de ocorrência**.
+- A busca (`Ctrl+F`) localiza notas ativas não só pelo número da NF, mas
+  também pelo nome do cliente/remetente ou pela sigla da unidade (busca
+  parcial, sem diferenciar maiúsculas/minúsculas).
+- Ao filtrar por ocorrência "AGENDAMENTO", a lista é organizada pela data do
+  agendamento em ordem crescente (a mais próxima primeiro, a mais distante
+  por último) — e não pela data em que a ocorrência foi inserida no sistema.
+- Menu de contexto com a opção **"Copiar informações da nota"**: copia para
+  a área de transferência todo o conteúdo do bloco (NF, cliente, ocorrência,
+  sigla, data/hora, dias em tratativas, lembrete e agendamento, se houver)
+  junto com todas as atualizações de tratativa já registradas.
+- Categorias de ocorrência fixas: REENTREGA, MUDOU-SE, LOCALIZAÇÃO,
+  ACOMPANHAR, COMPROVANTE, PRIORIZAR ENTREGA, AGENDAMENTO, DEVOLUÇÃO e
+  OUTROS. Qualquer texto digitado que não corresponda a uma dessas
+  categorias (por nome exato ou por prefixo, ex.: "prio" → "PRIORIZAR
+  ENTREGA") é classificado automaticamente como **OUTROS**, tanto ao
+  cadastrar quanto ao editar a ocorrência de uma nota — sem perguntas ou
+  necessidade de cadastro prévio.
 - Lógica de datas: `0` = data atual; `1` a `31` (um ou dois dígitos) = dia do
   mês/ano correntes; 8 dígitos = data completa `ddmmaaaa`.
 - Lógica de lembretes periódicos: sugerida automaticamente após inserir uma
@@ -140,12 +154,11 @@ ao lado do `.exe` na primeira execução.
   Cliente/Remetente → Ocorrência → Sigla/Empresa → Data → botão "Adicionar
   nota" → campo "Buscar NF" → botão "Buscar" → "Filtrar por ocorrência" →
   botão "Limpar filtro" → "Somente notas com lembrete".
-- Cliente/remetente, ocorrência e sigla/empresa são sempre convertidos para
-  LETRAS MAIÚSCULAS automaticamente ao cadastrar uma nova nota, editar um
-  campo existente ou cadastrar um novo tipo de ocorrência/remetente/empresa
-  parceira pelas telas de Cadastros. Todos os tipos de ocorrência já
-  cadastrados anteriormente (inclusive os personalizados) são convertidos
-  automaticamente para maiúsculas na primeira execução após esta atualização.
+- Cliente/remetente e sigla/empresa são sempre convertidos para LETRAS
+  MAIÚSCULAS automaticamente ao cadastrar uma nova nota, editar um campo
+  existente ou cadastrar um novo remetente/empresa parceira pelas telas de
+  Cadastros (a ocorrência é resolvida para uma das categorias oficiais, já
+  em maiúsculas, conforme explicado acima).
 - Atalhos de edição de texto nos campos NF, Cliente, Ocorrência, Sigla/Empresa,
   Data, Buscar NF e Filtrar por ocorrência: `Ctrl+Z` desfaz a última alteração,
   `Ctrl+Y` refaz, `Ctrl+Backspace` apaga a palavra anterior ao cursor e
@@ -181,6 +194,14 @@ conforme necessário:
 4. O histórico de 60 dias é limpo automaticamente a cada abertura do sistema e
    a cada abertura da tela de Relatório, além de poder ser apagado
    manualmente a qualquer momento.
+5. **Correção de travamento**: o pop-up de alerta automático (lembrete
+   periódico, agendamento e prioridade) não aguardava corretamente a resposta
+   do usuário antes de continuar a verificação. Quando várias notas tinham
+   lembretes vencidos ao mesmo tempo (comum logo ao abrir o sistema após um
+   tempo fechado), isso podia abrir várias janelas modais em sequência disputando
+   o controle da interface, travando a aplicação e exigindo encerrar pelo
+   Gerenciador de Tarefas. Agora cada pop-up aguarda ser fechado antes do
+   próximo ser exibido, eliminando esse travamento.
 
 ## Próximos passos sugeridos
 
