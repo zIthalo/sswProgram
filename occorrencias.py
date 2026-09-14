@@ -9,19 +9,8 @@ OCORRENCIAS_PADRAO = [
     "COMPROVANTE", "PRIORIZAR ENTREGA", "AGENDAMENTO", "DEVOLUÇÃO", "OUTROS",
 ]
 
-# Ocorrencias que disparam a sugestao de lembrete periodico logo apos a insercao da nota
-OCORRENCIAS_COM_LEMBRETE_SUGERIDO = {
-    "reentrega", "mudou-se", "localização", "localizacao", "acompanhar", "priorizar entrega",
-}
-
 # Ocorrencias tratadas como "agendamento"
 OCORRENCIAS_AGENDAMENTO = {"agendamento", "agenda"}
-
-# Ocorrencias tratadas como "prioridade" (lembrete fixo as 10h e 17h)
-OCORRENCIAS_PRIORIDADE = {"priorizar entrega", "prioridade"}
-
-# Siglas de unidades filiais da propria transportadora
-UNIDADES_FILIAIS = {"BLU", "TUB", "FLN", "CRI", "CWB", "SAO", "JVL"}
 
 
 def sugerir_ocorrencia(texto_digitado, tipos_disponiveis):
@@ -46,32 +35,5 @@ def sugerir_ocorrencia(texto_digitado, tipos_disponiveis):
     return None
 
 
-def eh_ocorrencia_com_lembrete_sugerido(ocorrencia):
-    return (ocorrencia or "").strip().lower() in OCORRENCIAS_COM_LEMBRETE_SUGERIDO
-
-
 def eh_ocorrencia_agendamento(ocorrencia):
     return (ocorrencia or "").strip().lower() in OCORRENCIAS_AGENDAMENTO
-
-
-def eh_ocorrencia_prioridade(ocorrencia):
-    return (ocorrencia or "").strip().lower() in OCORRENCIAS_PRIORIDADE
-
-
-def eh_unidade_filial(sigla):
-    return (sigla or "").strip().upper() in UNIDADES_FILIAIS
-
-
-def normalizar_ocorrencia(texto):
-    """
-    Resolve o texto digitado pelo usuario para uma das categorias oficiais de
-    ocorrencia (REENTREGA, MUDOU-SE, LOCALIZAÇÃO, ACOMPANHAR, COMPROVANTE,
-    PRIORIZAR ENTREGA, AGENDAMENTO, DEVOLUÇÃO). Qualquer texto que nao
-    corresponda a nenhuma dessas categorias e classificado automaticamente
-    como OUTROS.
-    """
-    texto = (texto or "").strip()
-    if not texto:
-        return "OUTROS"
-    sugestao = sugerir_ocorrencia(texto, OCORRENCIAS_PADRAO)
-    return sugestao if sugestao else "OUTROS"
