@@ -10,8 +10,6 @@ import os
 import sys
 from datetime import datetime
 
-import occorrencias as occ
-
 DB_NAME = "sac_logistica.db"
 
 
@@ -42,13 +40,10 @@ def init_db():
             cliente TEXT NOT NULL,
             ocorrencia TEXT NOT NULL,
             sigla TEXT NOT NULL,
-            data_ocorrencia TEXT NOT NULL,      -- ddmmyyyy, data informada pelo usuario
+            data_ocorrencia TEXT NOT NULL,      -- ddmmyyyy, data em que a nota foi inserida
             criado_em TEXT NOT NULL,            -- timestamp ISO completo p/ ordenacao
             resolvido INTEGER NOT NULL DEFAULT 0,
-            lembrete_codigo INTEGER,            -- codigo digitado pelo usuario (1-50 ou 100..400)
-            proximo_lembrete TEXT,              -- timestamp ISO do proximo disparo
-            agendamento_data TEXT,              -- ddmmyyyy, data do agendamento (se aplicavel)
-            verificado_parceiro INTEGER NOT NULL DEFAULT 0
+            agendamento_data TEXT               -- ddmmyyyy, data do agendamento (se aplicavel)
         )
     """)
 
@@ -98,16 +93,11 @@ def init_db():
         )
     """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS alertas_disparados (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nota_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL,      -- ex: 'agendamento_filial', 'parceiro_10h', 'parceiro_16h', 'prioridade_10h', 'prioridade_17h'
-            data_disparo TEXT NOT NULL,  -- ddmmyyyy (dia em que ja disparou, evita repeticao)
-            UNIQUE(nota_id, tipo, data_disparo)
-        )
-    """)
+    conn.commit()
 
+    # Migracao: remove colunas relacionadas a lembretes (funcionalidade removida
+    # do sistema) da tabela notas, recriando-a sem elas caso ainda existam.
+    _migrar_remover_lembretes(cur)
     conn.commit()
 
     # Migracao: se a tabela historico for de uma versao anterior do sistema (sem a
@@ -154,13 +144,40 @@ def init_db():
     # e no historico para letras maiusculas.
     _migrar_ocorrencias_maiusculas(cur)
     conn.commit()
-
-    # Migracao: garante que so existam as categorias oficiais de ocorrencia;
-    # qualquer tipo personalizado e qualquer ocorrencia gravada que nao seja
-    # uma das categorias oficiais e reclassificada como OUTROS.
-    _migrar_categorias_oficiais(cur)
-    conn.commit()
     conn.close()
+
+
+def _migrar_remover_lembretes(cur):
+    """Remove as colunas relacionadas a lembretes (lembrete_codigo,
+    proximo_lembrete, verificado_parceiro) da tabela notas, caso existam de
+    uma versao anterior do sistema, e descarta a tabela de alertas
+    disparados, que nao e mais utilizada."""
+    cur.execute("PRAGMA table_info(notas)")
+    colunas = [c["name"] for c in cur.fetchall()]
+    if "lembrete_codigo" in colunas or "verificado_parceiro" in colunas:
+        cur.execute("""
+            CREATE TABLE notas_novo (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nf_numero INTEGER NOT NULL,
+                cliente TEXT NOT NULL,
+                ocorrencia TEXT NOT NULL,
+                sigla TEXT NOT NULL,
+                data_ocorrencia TEXT NOT NULL,
+                criado_em TEXT NOT NULL,
+                resolvido INTEGER NOT NULL DEFAULT 0,
+                agendamento_data TEXT
+            )
+        """)
+        cur.execute("""
+            INSERT INTO notas_novo (id, nf_numero, cliente, ocorrencia, sigla,
+                                     data_ocorrencia, criado_em, resolvido, agendamento_data)
+            SELECT id, nf_numero, cliente, ocorrencia, sigla,
+                   data_ocorrencia, criado_em, resolvido, agendamento_data
+            FROM notas
+        """)
+        cur.execute("DROP TABLE notas")
+        cur.execute("ALTER TABLE notas_novo RENAME TO notas")
+    cur.execute("DROP TABLE IF EXISTS alertas_disparados")
 
 
 def _migrar_ocorrencias_maiusculas(cur):
@@ -179,37 +196,19 @@ def _migrar_ocorrencias_maiusculas(cur):
     cur.execute("UPDATE historico SET ocorrencia = UPPER(ocorrencia)")
 
 
-def _migrar_categorias_oficiais(cur):
-    oficiais = set(occ.OCORRENCIAS_PADRAO)
-
-    # Remove tipos personalizados do catalogo: as categorias de ocorrencia
-    # agora sao fixas (as oficiais + OUTROS).
-    cur.execute("DELETE FROM ocorrencias_tipos WHERE built_in=0")
-
-    # Reclassifica como OUTROS qualquer ocorrencia ja gravada que nao seja
-    # uma categoria oficial.
-    for tabela in ("notas", "historico"):
-        cur.execute("SELECT id, ocorrencia FROM %s" % tabela)
-        for r in cur.fetchall():
-            if r["ocorrencia"] not in oficiais:
-                nova = occ.normalizar_ocorrencia(r["ocorrencia"])
-                cur.execute("UPDATE %s SET ocorrencia=? WHERE id=?" % tabela, (nova, r["id"]))
-
-
 # ---------------------------------------------------------------------------
 # CRUD de notas
 # ---------------------------------------------------------------------------
 
-def inserir_nota(nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-                  lembrete_codigo=None, proximo_lembrete=None, agendamento_data=None):
+def inserir_nota(nf_numero, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data=None):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO notas (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-                            criado_em, resolvido, lembrete_codigo, proximo_lembrete, agendamento_data)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                            criado_em, resolvido, agendamento_data)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
     """, (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-          datetime.now().isoformat(), lembrete_codigo, proximo_lembrete, agendamento_data))
+          datetime.now().isoformat(), agendamento_data))
     conn.commit()
     novo_id = cur.lastrowid
     conn.close()
@@ -247,8 +246,7 @@ def obter_nota(nota_id):
 
 def atualizar_campo_nota(nota_id, campo, valor):
     campos_validos = {"nf_numero", "cliente", "ocorrencia", "sigla", "data_ocorrencia",
-                       "lembrete_codigo", "proximo_lembrete", "agendamento_data",
-                       "verificado_parceiro", "resolvido"}
+                       "agendamento_data", "resolvido"}
     if campo not in campos_validos:
         raise ValueError("Campo invalido: %s" % campo)
     conn = get_connection()
@@ -268,6 +266,18 @@ def remover_nota(nota_id):
 
 def marcar_resolvida(nota_id):
     atualizar_campo_nota(nota_id, "resolvido", 1)
+
+
+def listar_ocorrencias_em_uso():
+    """Retorna as ocorrencias (distintas) presentes entre as notas ativas,
+    usadas para popular o filtro por ocorrencia mostrando apenas os tipos
+    que realmente existem no momento."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT ocorrencia FROM notas WHERE resolvido=0 ORDER BY ocorrencia ASC")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["ocorrencia"] for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -508,29 +518,3 @@ def gerar_relatorio():
         "tempo_medio_dias": int(media_horas // 24),
         "tempo_medio_horas": int(round(media_horas % 24)),
     }
-
-
-# ---------------------------------------------------------------------------
-# Alertas ja disparados (evita repetir popup no mesmo dia)
-# ---------------------------------------------------------------------------
-
-def alerta_ja_disparado(nota_id, tipo, data_disparo):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM alertas_disparados WHERE nota_id=? AND tipo=? AND data_disparo=?",
-                (nota_id, tipo, data_disparo))
-    row = cur.fetchone()
-    conn.close()
-    return row is not None
-
-
-def registrar_alerta_disparado(nota_id, tipo, data_disparo):
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("INSERT INTO alertas_disparados (nota_id, tipo, data_disparo) VALUES (?, ?, ?)",
-                    (nota_id, tipo, data_disparo))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        pass
-    conn.close()

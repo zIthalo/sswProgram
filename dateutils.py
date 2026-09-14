@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 dateutils.py
-Logica de interpretacao de datas digitadas pelo usuario e de codigos de lembrete,
-conforme especificado pelo usuario do sistema de SAC.
+Logica de interpretacao de datas digitadas pelo usuario, conforme
+especificado pelo usuario do sistema de SAC.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 FORMATO = "%d%m%Y"  # ddmmyyyy, sem caracteres especiais
 
@@ -82,50 +82,3 @@ def data_e_passado_ou_hoje(data_str, referencia=None):
         referencia = datetime.now()
     d = data_str_para_datetime(data_str)
     return d.date() <= referencia.date()
-
-
-# ---------------------------------------------------------------------------
-# Codigos de lembrete
-# ---------------------------------------------------------------------------
-# Regras (conforme especificado):
-#   1 a 50   -> minutos literais (1 a 50 minutos)
-#   > 50     -> arredondado para o codigo valido mais proximo dentre:
-#               100 (1h), 130 (1h30), 200 (2h), 230 (2h30),
-#               300 (3h), 330 (3h30), 400 (4h)  <- maximo permitido
-CODIGOS_HORA_VALIDOS = [100, 130, 200, 230, 300, 330, 400]
-
-
-def normalizar_codigo_lembrete(numero):
-    """
-    Recebe o numero digitado pelo usuario (inteiro) e devolve o codigo final
-    (ja normalizado) a ser salvo e exibido, junto com o timedelta correspondente.
-    Retorna (codigo_final:int, delta:timedelta)
-    """
-    if numero is None:
-        raise ValueError("Numero de lembrete nao informado.")
-    numero = int(numero)
-
-    if numero < 1:
-        raise ValueError("O valor de lembrete deve ser maior que zero.")
-
-    if numero <= 50:
-        return numero, timedelta(minutes=numero)
-
-    # numero > 50: arredonda para o codigo de hora valido mais proximo, limitado a 400
-    mais_proximo = min(CODIGOS_HORA_VALIDOS, key=lambda c: abs(c - numero))
-    horas = mais_proximo // 100
-    minutos = mais_proximo % 100
-    return mais_proximo, timedelta(hours=horas, minutes=minutos)
-
-
-def formatar_codigo_lembrete(codigo):
-    """Retorna uma string amigavel para exibicao, ex: '30 min' ou '1h30'."""
-    if codigo is None:
-        return ""
-    if codigo <= 50:
-        return "%d min" % codigo
-    horas = codigo // 100
-    minutos = codigo % 100
-    if minutos == 0:
-        return "%dh" % horas
-    return "%dh%02d" % (horas, minutos)
