@@ -60,3 +60,18 @@ def eh_ocorrencia_prioridade(ocorrencia):
 
 def eh_unidade_filial(sigla):
     return (sigla or "").strip().upper() in UNIDADES_FILIAIS
+
+
+def normalizar_ocorrencia(texto):
+    """
+    Resolve o texto digitado pelo usuario para uma das categorias oficiais de
+    ocorrencia (REENTREGA, MUDOU-SE, LOCALIZAÇÃO, ACOMPANHAR, COMPROVANTE,
+    PRIORIZAR ENTREGA, AGENDAMENTO, DEVOLUÇÃO). Qualquer texto que nao
+    corresponda a nenhuma dessas categorias e classificado automaticamente
+    como OUTROS.
+    """
+    texto = (texto or "").strip()
+    if not texto:
+        return "OUTROS"
+    sugestao = sugerir_ocorrencia(texto, OCORRENCIAS_PADRAO)
+    return sugestao if sugestao else "OUTROS"

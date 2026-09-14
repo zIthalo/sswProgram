@@ -188,9 +188,16 @@ class PopupAlerta(tk.Toplevel):
         ttk.Button(botoes, text="OK", command=self.destroy).pack(side="left", padx=6)
 
         self.bind("<Return>", lambda e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.transient(master)
         self.update_idletasks()
         self.geometry("+%d+%d" % (master.winfo_rootx() + 80, master.winfo_rooty() + 80))
+        self.focus_force()
+        # Bloqueia ate o usuario fechar este popup: evita que varios lembretes
+        # disparados na mesma verificacao abram varias janelas modais ao mesmo
+        # tempo (o que travava a aplicacao, exigindo finalizar pelo Gerenciador
+        # de Tarefas).
+        self.wait_window(self)
 
     def _verificar(self):
         self.verificado = True

@@ -34,6 +34,26 @@ def hora_insercao(criado_em_iso):
         return ""
 
 
+def formatar_cabecalho_nota(nota):
+    dias = dias_em_tratativas(nota["criado_em"])
+    lembrete_txt = dateutils.formatar_codigo_lembrete(nota["lembrete_codigo"])
+
+    agendamento_txt = ""
+    if nota["agendamento_data"]:
+        agendamento_txt = " / AGENDAMENTO: %s" % dateutils.formatar_data_exibicao(nota["agendamento_data"])
+
+    return (
+        "NF: {nf} / CLIENTE: {cliente} / OCORRÊNCIA: {oc} / SIGLA UNIDADE: {sigla} / "
+        "DATA: {data} HORA: {hora} / DIAS EM TRATATIVAS: {dias}{lembrete}{agendamento}"
+    ).format(
+        nf=nota["nf_numero"], cliente=nota["cliente"], oc=nota["ocorrencia"],
+        sigla=nota["sigla"], data=dateutils.formatar_data_exibicao(nota["data_ocorrencia"]),
+        hora=hora_insercao(nota["criado_em"]), dias=dias,
+        lembrete=(" / LEMBRAR A CADA: %s" % lembrete_txt) if lembrete_txt else "",
+        agendamento=agendamento_txt,
+    )
+
+
 class NotaBlock(ttk.Frame):
     """Widget que representa o bloco visual de uma nota fiscal na tela principal."""
 
@@ -50,23 +70,7 @@ class NotaBlock(ttk.Frame):
         self._labels_texto = []
 
         nota = self.nota_row
-        dias = dias_em_tratativas(nota["criado_em"])
-        lembrete_txt = dateutils.formatar_codigo_lembrete(nota["lembrete_codigo"])
-
-        agendamento_txt = ""
-        if nota["agendamento_data"]:
-            agendamento_txt = " / AGENDAMENTO: %s" % dateutils.formatar_data_exibicao(nota["agendamento_data"])
-
-        cabecalho = (
-            "NF: {nf} / CLIENTE: {cliente} / OCORRÊNCIA: {oc} / SIGLA UNIDADE: {sigla} / "
-            "DATA: {data} HORA: {hora} / DIAS EM TRATATIVAS: {dias}{lembrete}{agendamento}"
-        ).format(
-            nf=nota["nf_numero"], cliente=nota["cliente"], oc=nota["ocorrencia"],
-            sigla=nota["sigla"], data=dateutils.formatar_data_exibicao(nota["data_ocorrencia"]),
-            hora=hora_insercao(nota["criado_em"]), dias=dias,
-            lembrete=(" / LEMBRAR A CADA: %s" % lembrete_txt) if lembrete_txt else "",
-            agendamento=agendamento_txt,
-        )
+        cabecalho = formatar_cabecalho_nota(nota)
 
         largura_atual = self.app.obter_largura_lista()
 
@@ -149,6 +153,9 @@ class NotaBlock(ttk.Frame):
                           command=lambda: self.app.editar_ocorrencia(self.nota_id))
         menu.add_command(label="Editar sigla",
                           command=lambda: self.app.editar_campo(self.nota_id, "sigla", "Sigla/Empresa"))
+        menu.add_separator()
+        menu.add_command(label="Copiar informações da nota",
+                          command=lambda: self.app.copiar_informacoes_nota(self.nota_id))
         menu.tk_popup(event.x_root, event.y_root)
 
 
@@ -193,8 +200,6 @@ class App(tk.Tk):
         m_cadastros = tk.Menu(barra, tearoff=0)
         m_cadastros.add_command(label="Empresas parceiras (Agex, Risso, etc.)",
                                  command=self._gerenciar_empresas_parceiras)
-        m_cadastros.add_command(label="Tipos de ocorrência",
-                                 command=self._gerenciar_tipos_ocorrencia)
         m_cadastros.add_command(label="Remetentes",
                                  command=self._gerenciar_clientes)
         barra.add_cascade(label="Cadastros", menu=m_cadastros)
@@ -207,12 +212,6 @@ class App(tk.Tk):
         GerenciarLista(self, "Empresas parceiras", db.listar_empresas_parceiras,
                         db.adicionar_empresa_parceira, db.remover_empresa_parceira)
         self._atualizar_combobox_sigla()
-
-    def _gerenciar_tipos_ocorrencia(self):
-        GerenciarLista(self, "Tipos de ocorrência",
-                        db.listar_tipos_ocorrencia, db.adicionar_tipo_ocorrencia,
-                        db.remover_tipo_ocorrencia)
-        self._atualizar_combobox_filtro()
 
     def _gerenciar_clientes(self):
         GerenciarLista(self, "Remetentes", db.listar_clientes,
@@ -568,17 +567,7 @@ class App(tk.Tk):
             messagebox.showerror("Erro", "Informe a ocorrência.")
             return
 
-        tipos = db.listar_tipos_ocorrencia()
-        sugestao = occ.sugerir_ocorrencia(ocorrencia_digitada, tipos)
-        ocorrencia = (sugestao if sugestao else ocorrencia_digitada).upper()
-        if ocorrencia.lower() not in [t.lower() for t in tipos]:
-            if messagebox.askyesno(
-                "Nova ocorrência",
-                "'%s' não está cadastrada. Deseja cadastrar este novo tipo de ocorrência?" % ocorrencia
-            ):
-                db.adicionar_tipo_ocorrencia(ocorrencia)
-            else:
-                return
+        ocorrencia = occ.normalizar_ocorrencia(ocorrencia_digitada)
 
         sigla = self.var_sigla.get().strip().upper()
         if not sigla:
@@ -653,7 +642,7 @@ class App(tk.Tk):
         frame = ttk.Frame(self)
         frame.pack(fill="x", padx=10)
         frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, text="Buscar NF (Ctrl+F):").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text="Buscar NF/Cliente/Sigla (Ctrl+F):").grid(row=0, column=0, sticky="w")
         self.var_busca = tk.StringVar()
         self.entry_busca = ttk.Entry(frame, textvariable=self.var_busca, width=20)
         self.entry_busca.grid(row=0, column=1, padx=6, sticky="ew")
@@ -668,17 +657,29 @@ class App(tk.Tk):
 
     def _executar_busca(self, event=None):
         texto = self.var_busca.get().strip()
-        if not texto.isdigit():
-            messagebox.showinfo("Busca", "Digite um número de NF válido.")
+        if not texto:
             return
-        nf = int(texto)
         alvo = None
-        for nota_id, bloco in self.blocos.items():
-            if bloco.nota_row["nf_numero"] == nf:
-                alvo = nota_id
-                break
+
+        if texto.isdigit():
+            nf = int(texto)
+            for nota_id, bloco in self.blocos.items():
+                if bloco.nota_row["nf_numero"] == nf:
+                    alvo = nota_id
+                    break
+
         if alvo is None:
-            messagebox.showinfo("Busca", "NF %d não encontrada entre as notas ativas." % nf)
+            texto_lower = texto.lower()
+            for nota_id, bloco in self.blocos.items():
+                cliente = bloco.nota_row["cliente"].lower()
+                sigla = bloco.nota_row["sigla"].lower()
+                if texto_lower in cliente or texto_lower in sigla:
+                    alvo = nota_id
+                    break
+
+        if alvo is None:
+            messagebox.showinfo(
+                "Busca", "Nenhuma nota ativa encontrada para \"%s\" (NF, cliente ou sigla)." % texto)
             return
         self._destacar_nota(alvo)
 
@@ -845,6 +846,8 @@ class App(tk.Tk):
         filtro = self.var_filtro.get() if hasattr(self, "var_filtro") else self.OPCAO_TODAS
         if filtro and filtro != self.OPCAO_TODAS:
             notas = [n for n in notas if n["ocorrencia"].strip().lower() == filtro.strip().lower()]
+            if filtro.strip().upper() == "AGENDAMENTO":
+                notas = sorted(notas, key=self._chave_ordenacao_agendamento)
 
         if hasattr(self, "var_somente_lembrete") and self.var_somente_lembrete.get():
             notas = [n for n in notas if n["lembrete_codigo"] is not None]
@@ -857,6 +860,16 @@ class App(tk.Tk):
         if self.nota_selecionada_id not in self.blocos:
             self.nota_selecionada_id = None
 
+    def _chave_ordenacao_agendamento(self, nota):
+        """Ordena as notas de Agendamento pela data agendada (mais próxima
+        primeiro), e não pela data em que a ocorrência foi inserida."""
+        if nota["agendamento_data"]:
+            try:
+                return dateutils.data_str_para_datetime(nota["agendamento_data"])
+            except ValueError:
+                pass
+        return datetime.max
+
     def mostrar_mensagem_flutuante(self, texto, event=None):
         x = self.winfo_pointerx()
         y = self.winfo_pointery()
@@ -865,6 +878,18 @@ class App(tk.Tk):
         popup.geometry("+%d+%d" % (x + 10, y + 10))
         tk.Label(popup, text=texto, background="#333", foreground="white", padx=6, pady=3).pack()
         self.after(1000, popup.destroy)
+
+    def copiar_informacoes_nota(self, nota_id):
+        nota = db.obter_nota(nota_id)
+        if nota is None:
+            return
+        linhas = [formatar_cabecalho_nota(nota)]
+        for t in db.listar_tratativas(nota_id):
+            linhas.append("%s: %s" % (t["timestamp"], t["texto"]))
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(linhas))
+        self.update()
+        self.mostrar_mensagem_flutuante("Informações copiadas!")
 
     # ------------------------------------------------------------------
     # Acoes do menu de contexto de cada nota
@@ -925,15 +950,7 @@ class App(tk.Tk):
         novo = editar_campo_texto(self, "Editar ocorrência", "Nova ocorrência:", nota["ocorrencia"])
         if not novo:
             return
-        novo = novo.strip().upper()
-        tipos = db.listar_tipos_ocorrencia()
-        sugestao = occ.sugerir_ocorrencia(novo, tipos)
-        ocorrencia_final = (sugestao if sugestao else novo).upper()
-        if ocorrencia_final.lower() not in [t.lower() for t in tipos]:
-            if messagebox.askyesno("Nova ocorrência", "Cadastrar '%s' como novo tipo?" % ocorrencia_final):
-                db.adicionar_tipo_ocorrencia(ocorrencia_final)
-            else:
-                return
+        ocorrencia_final = occ.normalizar_ocorrencia(novo.strip().upper())
         db.atualizar_campo_nota(nota_id, "ocorrencia", ocorrencia_final)
         self.recarregar_lista()
 
