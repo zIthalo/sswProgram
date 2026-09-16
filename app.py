@@ -58,11 +58,12 @@ def formatar_cabecalho_nota(nota):
 class NotaBlock(ttk.Frame):
     """Widget que representa o bloco visual de uma nota fiscal na tela principal."""
 
-    def __init__(self, master, app, nota_row):
+    def __init__(self, master, app, nota_row, tratativas=None):
         super().__init__(master, padding=8, relief="groove", borderwidth=1)
         self.app = app
         self.nota_id = nota_row["id"]
         self.nota_row = nota_row
+        self._tratativas = tratativas if tratativas is not None else db.listar_tratativas(self.nota_id)
 
         self.txt_cabecalho = tk.Text(
             self, wrap="word", height=1, borderwidth=0, highlightthickness=0,
@@ -104,7 +105,7 @@ class NotaBlock(ttk.Frame):
         self.frame_tratativas = ttk.Frame(self)
         self.frame_tratativas.pack(fill="x")
         self.frame_tratativas.bind("<Button-1>", self._selecionar)
-        for t in db.listar_tratativas(self.nota_id):
+        for t in self._tratativas:
             linha = tk.Label(self.frame_tratativas, text="%s: %s" % (t["timestamp"], t["texto"]),
                               anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual)
             linha.pack(fill="x")
@@ -120,7 +121,6 @@ class NotaBlock(ttk.Frame):
         self._atualizar_destaque_selecao()
 
     def _ajustar_altura_cabecalho(self):
-        self.txt_cabecalho.update_idletasks()
         try:
             linhas = self.txt_cabecalho.count("1.0", "end", "displaylines")
             n = linhas[0] if linhas else 1
@@ -199,6 +199,7 @@ class App(tk.Tk):
 
         self.blocos = {}  # nota_id -> NotaBlock
         self.nota_selecionada_id = None
+        self.filtro_busca_texto = ""  # filtro ativo de busca por cliente/sigla (minusculo, ou vazio)
         self._largura_lista_atual = 720
         self._suggestion_var = tk.StringVar(value="")
 
@@ -507,14 +508,18 @@ class App(tk.Tk):
 
     def _configurar_atalhos_edicao(self):
         """Adiciona Ctrl+Z (desfazer), Ctrl+Y (refazer), Ctrl+Backspace (apagar
-        palavra anterior) e Ctrl+Delete (apagar palavra seguinte) aos campos de
-        texto/combobox editáveis do sistema."""
+        palavra anterior), Ctrl+Delete (apagar palavra seguinte) e Ctrl+F
+        (focar a busca) aos campos de texto/combobox editáveis do sistema."""
         campos = [
             self.entry_nf, self.entry_cliente, self.entry_oc, self.combo_sigla,
             self.entry_busca, self.combo_filtro,
         ]
         for campo in campos:
             self._instalar_atalhos_edicao(campo)
+            # Entry/Combobox do Tkinter tem um atalho padrao de Ctrl+F (mover o
+            # cursor) que intercepta o evento antes de chegar ao bind_all da
+            # janela — por isso precisa ser sobrescrito individualmente aqui.
+            campo.bind("<Control-f>", self._focar_busca)
 
     def _instalar_atalhos_edicao(self, widget):
         widget._undo_stack = []
@@ -762,31 +767,39 @@ class App(tk.Tk):
             self._sugestao_busca_atual = None
 
         texto = self.var_busca.get().strip()
+
         if not texto:
+            # Campo de busca vazio: remove o filtro de busca ativo (se houver)
+            if self.filtro_busca_texto:
+                self.filtro_busca_texto = ""
+                self.recarregar_lista(resetar_scroll=True)
             return
-        alvo = None
 
         if texto.isdigit():
+            # Busca por NF: localiza e destaca a nota especifica (nao filtra a lista)
+            if self.filtro_busca_texto:
+                self.filtro_busca_texto = ""
+                self.recarregar_lista()
             nf = int(texto)
+            alvo = None
             for nota_id, bloco in self.blocos.items():
                 if bloco.nota_row["nf_numero"] == nf:
                     alvo = nota_id
                     break
-
-        if alvo is None:
-            texto_lower = texto.lower()
-            for nota_id, bloco in self.blocos.items():
-                cliente = bloco.nota_row["cliente"].lower()
-                sigla = bloco.nota_row["sigla"].lower()
-                if texto_lower in cliente or texto_lower in sigla:
-                    alvo = nota_id
-                    break
-
-        if alvo is None:
-            messagebox.showinfo(
-                "Busca", "Nenhuma nota ativa encontrada para \"%s\" (NF, cliente ou sigla)." % texto)
+            if alvo is None:
+                messagebox.showinfo(
+                    "Busca", "NF %d não encontrada entre as notas ativas exibidas." % nf)
+                return
+            self._destacar_nota(alvo)
             return
-        self._destacar_nota(alvo)
+
+        # Busca por cliente ou sigla: filtra a lista mostrando TODAS as notas
+        # correspondentes, independente de NF ou ocorrência.
+        self.filtro_busca_texto = texto.lower()
+        self.recarregar_lista(resetar_scroll=True)
+        if not self.blocos:
+            messagebox.showinfo(
+                "Busca", "Nenhuma nota ativa encontrada para \"%s\" (cliente ou sigla)." % texto)
 
     def _destacar_nota(self, nota_id):
         bloco = self.blocos.get(nota_id)
@@ -892,6 +905,8 @@ class App(tk.Tk):
 
     def _limpar_filtro(self):
         self.var_filtro.set(self.OPCAO_TODAS)
+        self.var_busca.set("")
+        self.filtro_busca_texto = ""
         self.recarregar_lista(resetar_scroll=True)
 
     # ------------------------------------------------------------------
@@ -950,16 +965,31 @@ class App(tk.Tk):
             if filtro.strip().upper() == "AGENDAMENTO":
                 notas = sorted(notas, key=self._chave_ordenacao_agendamento)
 
+        if self.filtro_busca_texto:
+            texto_f = self.filtro_busca_texto
+            notas = [n for n in notas if texto_f in n["cliente"].lower() or texto_f in n["sigla"].lower()]
+
+        # Busca as tratativas de todas as notas visiveis em uma unica consulta,
+        # em vez de uma consulta por nota (evita gargalo de performance quando
+        # ha muitas notas ativas).
+        tratativas_por_nota = db.listar_tratativas_por_notas([n["id"] for n in notas])
+
         for nota in notas:
-            bloco = NotaBlock(self.frame_lista, self, nota)
+            bloco = NotaBlock(self.frame_lista, self, nota, tratativas_por_nota.get(nota["id"], []))
             bloco.pack(fill="x", pady=4, padx=2)
             self.blocos[nota["id"]] = bloco
 
         if self.nota_selecionada_id not in self.blocos:
             self.nota_selecionada_id = None
 
+        # Um unico update_idletasks para toda a lista (em vez de um por bloco)
+        # resolve a geometria de uma vez, mantendo a insercao de notas rapida
+        # mesmo com muitas notas ativas.
+        self.frame_lista.update_idletasks()
+        for bloco in self.blocos.values():
+            bloco._ajustar_altura_cabecalho()
+
         if resetar_scroll:
-            self.canvas.update_idletasks()
             self.canvas.yview_moveto(0.0)
 
     def _chave_ordenacao_agendamento(self, nota):

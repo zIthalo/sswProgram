@@ -109,11 +109,18 @@ ao lado do `.exe` na primeira execução.
 
 ### Busca e filtros
 
-- Busca (`Ctrl+F` foca o campo) localiza notas ativas pelo número da NF,
-  pelo nome do cliente/remetente ou pela sigla da unidade (busca parcial,
-  sem diferenciar maiúsculas/minúsculas). Assim como no cadastro, o sistema
+- Busca (`Ctrl+F` foca o campo, funcionando mesmo com o foco em outro campo
+  de texto) localiza notas ativas pelo número da NF, pelo nome do
+  cliente/remetente ou pela sigla da unidade (busca parcial, sem
+  diferenciar maiúsculas/minúsculas). Assim como no cadastro, o sistema
   sugere o nome de um cliente já cadastrado enquanto o usuário digita, e
   `Enter`/`Tab` aceitam a sugestão.
+  - Ao buscar por **número de NF**, o sistema localiza e destaca aquela
+    nota específica na lista.
+  - Ao buscar por **cliente ou sigla**, o sistema **filtra a lista**,
+    mostrando todas as notas correspondentes àquele cliente/sigla,
+    independente do número de NF ou do tipo de ocorrência. O filtro é
+    removido ao limpar o campo de busca (ou pelo botão "Limpar filtro").
 - O filtro "Filtrar por ocorrência" é digitável (agiliza a localização do
   tipo) e mostra **apenas as ocorrências que existem entre as notas ativas
   no momento** — se não houver nenhuma nota de Agendamento, por exemplo,
@@ -182,6 +189,18 @@ ao lado do `.exe` na primeira execução.
    por ocorrência, a lista agora sempre volta para o topo automaticamente,
    em vez de permanecer na posição de rolagem anterior (que podia deixar o
    único resultado filtrado fora da área visível).
+7. **Correção de lentidão ao inserir notas/tratativas**: a lista de notas
+   estava recalculando a geometria de cada bloco individualmente (uma
+   operação cara) e consultando o banco de dados uma vez por nota para
+   buscar as tratativas, o que deixava o sistema lento conforme a
+   quantidade de notas ativas crescia. Agora as tratativas de todas as
+   notas visíveis são buscadas em uma única consulta, e o recálculo de
+   geometria é feito uma única vez para a lista inteira — a atualização
+   volta a ser praticamente instantânea.
+8. **Correção do atalho Ctrl+F**: os campos de texto do Tkinter têm um
+   atalho padrão de Ctrl+F (mover o cursor) que interceptava o atalho antes
+   dele chegar à busca. Agora o Ctrl+F funciona a partir de qualquer campo
+   do formulário, não só quando nenhum campo está em foco.
 
 ## Próximos passos sugeridos
 

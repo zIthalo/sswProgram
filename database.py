@@ -303,6 +303,27 @@ def listar_tratativas(nota_id):
     return rows
 
 
+def listar_tratativas_por_notas(nota_ids):
+    """Busca as tratativas de varias notas em uma unica consulta (evita repetir
+    uma consulta por nota ao recarregar a lista inteira). Retorna um dict
+    {nota_id: [linhas de tratativa]}."""
+    nota_ids = list(nota_ids)
+    if not nota_ids:
+        return {}
+    conn = get_connection()
+    cur = conn.cursor()
+    marcadores = ",".join("?" * len(nota_ids))
+    cur.execute(
+        "SELECT * FROM tratativas WHERE nota_id IN (%s) ORDER BY nota_id ASC, id ASC" % marcadores,
+        nota_ids,
+    )
+    resultado = {}
+    for row in cur.fetchall():
+        resultado.setdefault(row["nota_id"], []).append(row)
+    conn.close()
+    return resultado
+
+
 # ---------------------------------------------------------------------------
 # Empresas parceiras (Agex, Risso, etc.)
 # ---------------------------------------------------------------------------
