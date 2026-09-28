@@ -142,7 +142,7 @@ class NotaBlock(ttk.Frame):
         self._ajustar_altura_cabecalho()
 
     def _selecionar(self, event=None):
-        self.app.selecionar_nota(self.nota_id)
+        self.app.selecionar_nota(self.nota_id, rolar=False)
 
     def atualizar(self, nota_row):
         self.nota_row = nota_row
@@ -163,9 +163,24 @@ class NotaBlock(ttk.Frame):
             parent=self.app,
         )
         if texto:
-            db.adicionar_tratativa(self.nota_id, texto.strip().upper())
-            self.app.recarregar_lista()
+            texto = texto.strip().upper()
+            timestamp = db.adicionar_tratativa(self.nota_id, texto)
+            self._adicionar_linha_tratativa(timestamp, texto)
         return "break"
+
+    def _adicionar_linha_tratativa(self, timestamp, texto):
+        """Insere a nova linha de tratativa direto neste bloco, sem reconstruir
+        a lista inteira — mantém a inserção rápida mesmo com muitas notas."""
+        largura_atual = self.app.obter_largura_lista()
+        linha = tk.Label(self.frame_tratativas, text="%s: %s" % (timestamp, texto),
+                          anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual)
+        linha.pack(fill="x")
+        linha.bind("<Button-1>", self._selecionar)
+        linha.bind("<Double-Button-1>", self._adicionar_tratativa)
+        linha.bind("<Button-3>", self._abrir_menu)
+        self._labels_texto.append(linha)
+        self._tratativas.append({"timestamp": timestamp, "texto": texto})
+        self.app.atualizar_scrollregion()
 
     def _abrir_menu(self, event):
         menu = tk.Menu(self.app, tearoff=0)
@@ -200,6 +215,7 @@ class App(tk.Tk):
         self.blocos = {}  # nota_id -> NotaBlock
         self.nota_selecionada_id = None
         self.filtro_busca_texto = ""  # filtro ativo de busca por cliente/sigla (minusculo, ou vazio)
+        self.filtro_busca_ids = None  # ids de notas encontradas por numero/texto nas tratativas (ou None)
         self._largura_lista_atual = 720
         self._suggestion_var = tk.StringVar(value="")
 
@@ -256,14 +272,51 @@ class App(tk.Tk):
 
     def _abrir_relatorio(self):
         db.limpar_historico_expirado(60)
-        dados = db.gerar_relatorio()
+        try:
+            dados = db.gerar_relatorio()
+        except Exception:
+            dados = {
+                "siglas_mais_ocorrencias": [], "unidades_mais_morosas": [],
+                "clientes_mais_morosos": [], "tempo_medio_dias": 0, "tempo_medio_horas": 0,
+            }
 
         janela = tk.Toplevel(self)
         janela.title("Relatório")
-        janela.geometry("480x680")
+        janela.geometry("480x760")
         frame = ttk.Frame(janela, padding=12)
         frame.pack(fill="both", expand=True)
 
+        ttk.Label(frame, text="Notas pendentes de tratativa:",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        try:
+            total_pendentes = db.contar_notas_pendentes()
+            texto_total = "  Total: %d nota(s) pendente(s)" % total_pendentes
+        except Exception:
+            texto_total = "  Não foi possível calcular (verifique se o programa foi atualizado corretamente)."
+        ttk.Label(frame, text=texto_total).pack(anchor="w")
+
+        linha_sigla = ttk.Frame(frame)
+        linha_sigla.pack(fill="x", pady=(4, 0))
+        ttk.Label(linha_sigla, text="  Por sigla/empresa:").pack(side="left")
+        var_sigla_pendente = tk.StringVar()
+        ttk.Entry(linha_sigla, textvariable=var_sigla_pendente, width=16).pack(side="left", padx=(6, 6))
+        lbl_resultado_sigla = ttk.Label(linha_sigla, text="")
+        lbl_resultado_sigla.pack(side="left")
+
+        def atualizar_contagem_sigla(*_args):
+            texto = var_sigla_pendente.get().strip()
+            if not texto:
+                lbl_resultado_sigla.configure(text="")
+                return
+            try:
+                total = db.contar_notas_pendentes_por_sigla(texto)
+                lbl_resultado_sigla.configure(text="%d nota(s) pendente(s)" % total)
+            except Exception:
+                lbl_resultado_sigla.configure(text="Não foi possível calcular.")
+
+        var_sigla_pendente.trace_add("write", atualizar_contagem_sigla)
+
+        ttk.Separator(frame).pack(fill="x", pady=10)
         ttk.Label(frame, text="Unidades com mais ocorrências (top 5):",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
         for sigla, total in dados["siglas_mais_ocorrencias"]:
@@ -387,8 +440,7 @@ class App(tk.Tk):
                 ttk.Label(interior, text="Nenhum registro encontrado.").pack(anchor="w")
                 return
             for h in registros:
-                ttk.Label(interior, text=self._formatar_linha_historico(h),
-                          wraplength=480, justify="left").pack(anchor="w", pady=2)
+                self._criar_label_historico(interior, h, wraplength=480).pack(anchor="w", pady=2)
 
         for var in (var_cliente, var_sigla, var_nf):
             var.trace_add("write", atualizar)
@@ -404,6 +456,21 @@ class App(tk.Tk):
             h["nf_numero"], h["cliente"], h["ocorrencia"], h["sigla"], h["dias"], h["horas"],
             morosidade_txt.get(h["morosidade"], "-"), h["resolvido_em"][:16].replace("T", " "),
         )
+
+    def _criar_label_historico(self, master, h, wraplength):
+        """Cria o label de uma linha de histórico/relatório; clicar nele copia
+        o número da NF para a área de transferência (assim como já acontece
+        nos blocos de notas ativas)."""
+        lbl = tk.Label(master, text=self._formatar_linha_historico(h), wraplength=wraplength,
+                        justify="left", cursor="hand2")
+        lbl.bind("<Button-1>", lambda e, nf=h["nf_numero"]: self._copiar_nf_historico(nf))
+        return lbl
+
+    def _copiar_nf_historico(self, nf_numero):
+        self.clipboard_clear()
+        self.clipboard_append(str(nf_numero))
+        self.update()
+        self.mostrar_mensagem_flutuante("Número copiado!")
 
     def _mostrar_detalhes_historico(self, titulo, registros):
         """Mostra as notas do histórico que embasam um item clicado no top 5
@@ -428,8 +495,7 @@ class App(tk.Tk):
             ttk.Label(interior, text="Nenhum registro encontrado.").pack(anchor="w")
             return
         for h in registros:
-            ttk.Label(interior, text=self._formatar_linha_historico(h),
-                      wraplength=420, justify="left").pack(anchor="w", pady=2)
+            self._criar_label_historico(interior, h, wraplength=420).pack(anchor="w", pady=2)
 
     # ------------------------------------------------------------------
     # Formulario de insercao de nota
@@ -697,10 +763,12 @@ class App(tk.Tk):
                 messagebox.showerror("Erro", "A data do agendamento é igual ou inferior a data atual.")
                 return
 
-        db.inserir_nota(nf, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data)
+        novo_id = db.inserir_nota(nf, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data)
 
         if cliente.lower() not in [c.lower() for c in db.listar_clientes()]:
             db.adicionar_cliente(cliente)
+
+        self._garantir_visibilidade(cliente, sigla, ocorrencia)
 
         self.var_nf.set("")
         self.var_cliente.set("")
@@ -711,8 +779,48 @@ class App(tk.Tk):
         self._sugestao_atual = None
         self._sugestao_cliente_atual = None
 
-        self.recarregar_lista()
+        filtro_atual = self.var_filtro.get() if hasattr(self, "var_filtro") else self.OPCAO_TODAS
+        if filtro_atual.strip().upper() == "AGENDAMENTO":
+            # Precisa reordenar pela data do agendamento: usa o caminho completo.
+            self.recarregar_lista()
+        else:
+            # Caminho rápido: acrescenta só o bloco novo, sem reconstruir a
+            # lista inteira (mantém a inserção rápida mesmo com muitas notas).
+            self._adicionar_bloco_rapido(db.obter_nota(novo_id))
         self._focar(self.entry_nf)
+
+    def _adicionar_bloco_rapido(self, nota):
+        """Acrescenta uma nota recém-inserida diretamente na tela, sem
+        reconstruir todos os blocos existentes — a lista já fica ordenada por
+        data de inserção, então a nota nova sempre entra no final."""
+        bloco = NotaBlock(self.frame_lista, self, nota, [])
+        bloco.pack(fill="x", pady=4, padx=2)
+        self.blocos[nota["id"]] = bloco
+        self.frame_lista.update_idletasks()
+        bloco._ajustar_altura_cabecalho()
+        self.atualizar_scrollregion()
+        if hasattr(self, "combo_filtro"):
+            self._atualizar_combobox_filtro()
+
+    def _garantir_visibilidade(self, cliente, sigla, ocorrencia):
+        """Limpa filtros ativos (por ocorrência ou por busca) que fariam uma
+        nota recem-inserida ou editada ficar escondida da lista — sem isso, o
+        usuário tinha a impressão de que a nota "sumiu" até fechar e reabrir
+        o sistema."""
+        if hasattr(self, "var_filtro"):
+            filtro_atual = self.var_filtro.get()
+            if filtro_atual != self.OPCAO_TODAS and filtro_atual.strip().lower() != ocorrencia.strip().lower():
+                self.var_filtro.set(self.OPCAO_TODAS)
+
+        if getattr(self, "filtro_busca_texto", ""):
+            texto_f = self.filtro_busca_texto
+            if texto_f not in cliente.lower() and texto_f not in sigla.lower():
+                self.var_busca.set("")
+                self.filtro_busca_texto = ""
+
+        if getattr(self, "filtro_busca_ids", None) is not None:
+            self.var_busca.set("")
+            self.filtro_busca_ids = None
 
     # ------------------------------------------------------------------
     # Busca (Ctrl+F)
@@ -769,32 +877,45 @@ class App(tk.Tk):
         texto = self.var_busca.get().strip()
 
         if not texto:
-            # Campo de busca vazio: remove o filtro de busca ativo (se houver)
-            if self.filtro_busca_texto:
+            # Campo de busca vazio: remove qualquer filtro de busca ativo
+            if self.filtro_busca_texto or self.filtro_busca_ids is not None:
                 self.filtro_busca_texto = ""
+                self.filtro_busca_ids = None
                 self.recarregar_lista(resetar_scroll=True)
             return
 
         if texto.isdigit():
-            # Busca por NF: localiza e destaca a nota especifica (nao filtra a lista)
-            if self.filtro_busca_texto:
-                self.filtro_busca_texto = ""
-                self.recarregar_lista()
+            # 1) Busca por NF: localiza e destaca a nota especifica (nao filtra a lista)
             nf = int(texto)
             alvo = None
             for nota_id, bloco in self.blocos.items():
                 if bloco.nota_row["nf_numero"] == nf:
                     alvo = nota_id
                     break
-            if alvo is None:
-                messagebox.showinfo(
-                    "Busca", "NF %d não encontrada entre as notas ativas exibidas." % nf)
+            if alvo is not None:
+                if self.filtro_busca_texto or self.filtro_busca_ids is not None:
+                    self.filtro_busca_texto = ""
+                    self.filtro_busca_ids = None
+                    self.recarregar_lista()
+                self._destacar_nota(alvo)
                 return
-            self._destacar_nota(alvo)
+
+            # 2) Se não for uma NF ativa, localiza o número dentro das
+            # atualizações de tratativa (ocorrências) já registradas.
+            ids_encontrados = db.buscar_notas_ativas_por_texto_tratativa(texto)
+            if ids_encontrados:
+                self.filtro_busca_texto = ""
+                self.filtro_busca_ids = set(ids_encontrados)
+                self.recarregar_lista(resetar_scroll=True)
+                return
+
+            messagebox.showinfo(
+                "Busca", "NF %d não encontrada (nem como número de NF, nem em atualizações de ocorrência)." % nf)
             return
 
         # Busca por cliente ou sigla: filtra a lista mostrando TODAS as notas
         # correspondentes, independente de NF ou ocorrência.
+        self.filtro_busca_ids = None
         self.filtro_busca_texto = texto.lower()
         self.recarregar_lista(resetar_scroll=True)
         if not self.blocos:
@@ -817,7 +938,14 @@ class App(tk.Tk):
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(bloco.winfo_y() / max(self.frame_lista.winfo_height(), 1))
 
-    def selecionar_nota(self, nota_id):
+    def atualizar_scrollregion(self):
+        """Resincroniza a área rolável do canvas com o conteúdo atual, sem
+        reconstruir a lista inteira (usado após inserções pontuais, como uma
+        nova tratativa ou uma nova nota, para manter a inserção rápida)."""
+        self.frame_lista.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def selecionar_nota(self, nota_id, rolar=True):
         anterior = self.blocos.get(self.nota_selecionada_id)
         if anterior is not None:
             anterior.txt_cabecalho.configure(background=self.cget("bg"))
@@ -825,7 +953,8 @@ class App(tk.Tk):
         bloco = self.blocos.get(nota_id)
         if bloco is not None:
             bloco.txt_cabecalho.configure(background="#cfe8ff")
-            self._rolar_para(nota_id)
+            if rolar:
+                self._rolar_para(nota_id)
         self.canvas.focus_set()
 
     def _mover_selecao(self, direcao):
@@ -907,6 +1036,7 @@ class App(tk.Tk):
         self.var_filtro.set(self.OPCAO_TODAS)
         self.var_busca.set("")
         self.filtro_busca_texto = ""
+        self.filtro_busca_ids = None
         self.recarregar_lista(resetar_scroll=True)
 
     # ------------------------------------------------------------------
@@ -969,6 +1099,9 @@ class App(tk.Tk):
             texto_f = self.filtro_busca_texto
             notas = [n for n in notas if texto_f in n["cliente"].lower() or texto_f in n["sigla"].lower()]
 
+        if self.filtro_busca_ids is not None:
+            notas = [n for n in notas if n["id"] in self.filtro_busca_ids]
+
         # Busca as tratativas de todas as notas visiveis em uma unica consulta,
         # em vez de uma consulta por nota (evita gargalo de performance quando
         # ha muitas notas ativas).
@@ -988,6 +1121,12 @@ class App(tk.Tk):
         self.frame_lista.update_idletasks()
         for bloco in self.blocos.values():
             bloco._ajustar_altura_cabecalho()
+
+        # Reajustar a altura dos cabecalhos (acima) pode mudar o tamanho total
+        # da lista; resincroniza a scrollregion do canvas com o tamanho final,
+        # senao a area rolavel fica maior que o conteudo real e os blocos
+        # parecem "se mover" quando o usuario rola o mouse.
+        self.atualizar_scrollregion()
 
         if resetar_scroll:
             self.canvas.yview_moveto(0.0)
@@ -1038,7 +1177,20 @@ class App(tk.Tk):
             resultado["sigla"], resultado["dias"], resultado["horas"], resultado["morosidade"],
         )
         db.marcar_resolvida(nota_id)
-        self.recarregar_lista()
+        self._remover_bloco_rapido(nota_id)
+
+    def _remover_bloco_rapido(self, nota_id):
+        """Remove o bloco de uma nota resolvida diretamente da tela, sem
+        reconstruir a lista inteira (mantém a ação rápida mesmo com muitas
+        notas ativas)."""
+        bloco = self.blocos.pop(nota_id, None)
+        if bloco is not None:
+            if self.nota_selecionada_id == nota_id:
+                self.nota_selecionada_id = None
+            bloco.destroy()
+            self.atualizar_scrollregion()
+        if hasattr(self, "combo_filtro"):
+            self._atualizar_combobox_filtro()
 
     def editar_campo(self, nota_id, campo, rotulo):
         nota = db.obter_nota(nota_id)
@@ -1076,4 +1228,5 @@ class App(tk.Tk):
             else:
                 return
         db.atualizar_campo_nota(nota_id, "ocorrencia", ocorrencia_final)
+        self._garantir_visibilidade(nota["cliente"], nota["sigla"], ocorrencia_final)
         self.recarregar_lista()

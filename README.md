@@ -116,7 +116,11 @@ ao lado do `.exe` na primeira execução.
   sugere o nome de um cliente já cadastrado enquanto o usuário digita, e
   `Enter`/`Tab` aceitam a sugestão.
   - Ao buscar por **número de NF**, o sistema localiza e destaca aquela
-    nota específica na lista.
+    nota específica na lista. Se o número não corresponder a nenhuma NF
+    ativa, o sistema também procura esse número dentro das **atualizações
+    de tratativa** já registradas (ex.: um protocolo ou telefone anotado em
+    uma ocorrência) e, se encontrar, filtra a lista mostrando as notas
+    correspondentes.
   - Ao buscar por **cliente ou sigla**, o sistema **filtra a lista**,
     mostrando todas as notas correspondentes àquele cliente/sigla,
     independente do número de NF ou do tipo de ocorrência. O filtro é
@@ -145,6 +149,10 @@ ao lado do `.exe` na primeira execução.
 
 ### Relatório
 
+- **Notas pendentes de tratativa**: total de notas ainda não marcadas como
+  resolvidas, além de um campo para digitar uma sigla/empresa e ver, em
+  tempo real, quantas notas pendentes existem para ela (busca parcial, sem
+  diferenciar maiúsculas/minúsculas).
 - **Unidades com mais ocorrências** (top 5, da maior para a menor).
 - **Tempo médio para solução do caso** (em dias e horas).
 - **Unidades mais morosas** (top 5, da mais para a menos morosa).
@@ -201,6 +209,40 @@ ao lado do `.exe` na primeira execução.
    atalho padrão de Ctrl+F (mover o cursor) que interceptava o atalho antes
    dele chegar à busca. Agora o Ctrl+F funciona a partir de qualquer campo
    do formulário, não só quando nenhum campo está em foco.
+9. **Correção de blocos "se movendo" ao rolar o mouse**: quando um filtro
+   deixava poucas notas visíveis, a área rolável do canvas podia ficar
+   maior que o conteúdo real (por causa dos ajustes de altura dos
+   cabeçalhos acontecerem depois do cálculo de rolagem), fazendo o bloco
+   parecer se deslocar ao rolar o mouse mesmo sem haver nada para rolar.
+   Corrigido resincronizando a área rolável com o tamanho final da lista.
+10. **Cópia de NF no Histórico e no Relatório**: os blocos de nota exibidos
+    na aba Histórico e no detalhamento de unidades/clientes do Relatório
+    agora também copiam o número da NF para a área de transferência ao
+    serem clicados, assim como já acontecia com as notas ativas.
+11. **Notas que pareciam "sumir"**: ao inserir uma nova nota ou editar a
+    ocorrência de uma nota existente, se um filtro (por ocorrência ou por
+    busca) estivesse ativo e não correspondesse à nota recém-alterada, o
+    sistema agora limpa esse filtro automaticamente para garantir que a
+    nota apareça imediatamente, sem precisar fechar e reabrir o sistema.
+12. **Clique não rola mais a tela**: clicar sobre uma nota (para selecioná-la
+    ou copiar a NF) não força mais a lista a rolar até ela — a rolagem
+    automática continua existindo apenas na busca (Ctrl+F) e na navegação
+    por teclado (setas ↑/↓), onde faz sentido trazer a nota para a área
+    visível.
+13. **Otimizações de velocidade na inserção de notas/tratativas e ao marcar
+    como resolvido**: inserir uma nova nota, uma nova atualização de
+    tratativa, ou marcar uma nota como resolvida não reconstrói mais a lista
+    inteira — o sistema agora só acrescenta o bloco novo (ou remove o bloco
+    resolvido) diretamente na tela, sem tocar nos demais (exceto ao inserir
+    uma nota de Agendamento com o filtro "AGENDAMENTO" ativo, caso em que a
+    lista precisa ser reordenada pela data). O banco de dados também passou
+    a usar o modo WAL do SQLite, que acelera a gravação de cada
+    nota/tratativa/resolução. Com essas mudanças, essas três ações deixam de
+    depender da quantidade de notas já cadastradas — testes isolados do
+    banco de dados (sem contar o tempo de desenho da tela, que varia
+    conforme o computador) mostraram tempos na casa de 1 a 2 milissegundos,
+    mesmo com 150 notas ativas simuladas. Não foi necessário remover nenhuma
+    funcionalidade para atingir esse ganho.
 
 ## Próximos passos sugeridos
 
