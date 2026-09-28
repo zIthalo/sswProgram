@@ -26,6 +26,14 @@ def get_connection():
     conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Modo WAL + synchronous=NORMAL deixam os commits bem mais rapidos (menos
+    # espera por gravacao em disco a cada insercao de nota/tratativa), com um
+    # risco de durabilidade minimo (so afeta os ultimos commits em caso de
+    # queda de energia/travamento do sistema operacional, cenario raro em uso
+    # normal) — troca padrao para aplicativos desktop que precisam responder
+    # rapido a cada acao do usuario.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -280,6 +288,30 @@ def listar_ocorrencias_em_uso():
     return [r["ocorrencia"] for r in rows]
 
 
+def contar_notas_pendentes():
+    """Quantidade total de notas ainda nao marcadas como resolvidas."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as total FROM notas WHERE resolvido=0")
+    total = cur.fetchone()["total"]
+    conn.close()
+    return total
+
+
+def contar_notas_pendentes_por_sigla(texto):
+    """Quantidade de notas pendentes cuja sigla/empresa contenha o texto
+    informado (busca parcial, sem diferenciar maiusculas/minusculas)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT COUNT(*) as total FROM notas WHERE resolvido=0 AND sigla LIKE ? COLLATE NOCASE",
+        ("%" + texto + "%",),
+    )
+    total = cur.fetchone()["total"]
+    conn.close()
+    return total
+
+
 # ---------------------------------------------------------------------------
 # Tratativas (atualizacoes de ocorrencia)
 # ---------------------------------------------------------------------------
@@ -292,6 +324,7 @@ def adicionar_tratativa(nota_id, texto):
                 (nota_id, ts, texto))
     conn.commit()
     conn.close()
+    return ts
 
 
 def listar_tratativas(nota_id):
@@ -322,6 +355,25 @@ def listar_tratativas_por_notas(nota_ids):
         resultado.setdefault(row["nota_id"], []).append(row)
     conn.close()
     return resultado
+
+
+def buscar_notas_ativas_por_texto_tratativa(texto):
+    """Retorna os ids das notas ativas cujas atualizacoes de tratativa contenham
+    o texto informado (usado para localizar numeros/textos que o usuario
+    tenha digitado dentro das ocorrencias/atualizacoes de uma nota)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT t.nota_id FROM tratativas t
+        JOIN notas n ON n.id = t.nota_id
+        WHERE n.resolvido = 0 AND t.texto LIKE ?
+        """,
+        ("%" + texto + "%",),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [r["nota_id"] for r in rows]
 
 
 # ---------------------------------------------------------------------------
