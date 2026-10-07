@@ -243,6 +243,61 @@ ao lado do `.exe` na primeira execução.
     conforme o computador) mostraram tempos na casa de 1 a 2 milissegundos,
     mesmo com 150 notas ativas simuladas. Não foi necessário remover nenhuma
     funcionalidade para atingir esse ganho.
+14. **Correção de tratativas "invisíveis"**: em alguns blocos, o espaço da
+    atualização de tratativa aparecia reservado na tela, mas o texto não era
+    desenhado até o usuário redimensionar a janela manualmente — um
+    comportamento típico do Tkinter no Windows, em que um widget é criado e
+    ocupa espaço, mas não é repintado imediatamente. Corrigido forçando uma
+    repintura completa (não apenas o recálculo de geometria) sempre que a
+    lista é atualizada, o que resolve o problema sem exigir ação do usuário.
+15. **Otimizações de velocidade ao editar campos e ao redimensionar a
+    janela**: editar um campo de uma nota (ocorrência, sigla, NF, etc.) não
+    reconstrói mais a lista inteira — o sistema agora atualiza somente o
+    bloco da nota alterada (exceto com o filtro "AGENDAMENTO" ativo, caso em
+    que a lista precisa ser reordenada). Dentro do próprio bloco atualizado,
+    agora só o texto do cabeçalho (NF/CLIENTE/OCORRÊNCIA/SIGLA/AGENDAMENTO)
+    é reescrito — o separador e as linhas de tratativa já existentes não são
+    mais destruídos e recriados, já que nenhum desses campos é afetado por
+    uma edição de NF/cliente/ocorrência/sigla, o que preserva o estado
+    desses widgets e evita trabalho desnecessário. Essa atualização pontual
+    também não força mais a repintura completa do canvas usada apenas para
+    blocos recém-criados (ver item 14), já que o bloco editado já está
+    desenhado na tela. Ao redimensionar a janela, eventos que alteram só a
+    altura (sem mudar a largura útil da lista) agora são ignorados
+    imediatamente, e o reajuste de quebra de linha de cada bloco passou a
+    rodar uma única vez, depois que o usuário solta o arraste do mouse, em
+    vez de a cada evento intermediário durante o arraste. Juntas, essas
+    mudanças eliminam o atraso perceptível ao editar um campo ou redimensionar
+    a janela com muitas notas ativas, sem alterar nenhum outro comportamento
+    do sistema.
+16. **Correção de tela "quebrada"/sobreposta ao usar Win+seta ou arrastar
+    rapidamente a borda da janela**: o item 15 parou de forçar a repintura
+    completa também no único momento em que o reajuste de layout do
+    redimensionamento é de fato aplicado (80ms depois do usuário soltar o
+    mouse ou do encaixe automático do Windows). Isso não tem custo perceptível
+    — acontece uma única vez por redimensionamento, não a cada evento —, mas
+    sem essa repintura, um salto brusco de largura (como o atalho Windows+seta
+    para encaixar a janela na metade da tela, ou um arraste muito rápido)
+    podia deixar a tela com conteúdo sobreposto/desatualizado até alguma
+    outra ação forçar um redesenho. Corrigido voltando a forçar a repintura
+    completa nesse ponto específico (e só nele), mantendo intacto o ganho de
+    desempenho durante o arraste em si.
+17. **Correção de texto cortado/deslocado ao encaixar a janela com
+    Windows+seta**: mesmo após o item 16, o atalho Windows+seta (que move E
+    redimensiona a janela em uma única operação do sistema, encaixando-a em
+    metade da tela) podia deixar o conteúdo da lista com as primeiras letras
+    de cada linha cortadas, como se a área rolável tivesse deslizado para a
+    direita — mesmo o canvas só tendo rolagem vertical configurada (sem barra
+    horizontal para o usuário corrigir isso manualmente). Duas correções:
+    (1) o redimensionamento agora lê a largura real e atual do canvas
+    (`winfo_width()`) em vez de confiar no valor do evento `<Configure>`
+    isolado, que podia não refletir ainda a largura final nesse tipo de
+    operação combinada de mover+redimensionar; (2) a posição horizontal da
+    área rolável é redefinida explicitamente para o início a cada
+    redimensionamento, já que este canvas nunca foi projetado para rolar na
+    horizontal. Ambas as correções são de custo fixo (não crescem com a
+    quantidade de notas ativas), então não afetam o ganho de desempenho dos
+    itens 15 e 16.
 
 ## Próximos passos sugeridos
 

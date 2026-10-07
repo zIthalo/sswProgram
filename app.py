@@ -85,18 +85,9 @@ class NotaBlock(ttk.Frame):
                 widget.destroy()
         self._labels_texto = []
 
-        nota = self.nota_row
         largura_atual = self.app.obter_largura_lista()
 
-        self.txt_cabecalho.configure(state="normal")
-        self.txt_cabecalho.delete("1.0", tk.END)
-        for texto, negrito in montar_segmentos_cabecalho(nota):
-            self.txt_cabecalho.insert(tk.END, texto, ("negrito",) if negrito else ())
-        self.txt_cabecalho.configure(state="disabled", insertwidth=0)
-        self.txt_cabecalho.bind("<Button-1>", self._copiar_nf)
-        self.txt_cabecalho.bind("<Button-3>", self._abrir_menu)
-        self.txt_cabecalho.bind("<Double-Button-1>", self._adicionar_tratativa)
-        self._ajustar_altura_cabecalho()
+        self._atualizar_cabecalho()
 
         separador = tk.Label(self, text="=" * 90, anchor="w", font=("Consolas", 7))
         separador.pack(fill="x")
@@ -119,6 +110,25 @@ class NotaBlock(ttk.Frame):
         self.bind("<Double-Button-1>", self._adicionar_tratativa)
 
         self._atualizar_destaque_selecao()
+
+    def _atualizar_cabecalho(self):
+        """Reescreve somente o texto do cabeçalho (NF/CLIENTE/OCORRÊNCIA/
+        SIGLA/AGENDAMENTO) a partir de self.nota_row. Usada tanto na
+        montagem inicial do bloco (_montar) quanto na atualização pontual
+        de um campo editado (atualizar) — nesse segundo caso, isolar essa
+        etapa evita destruir e recriar o separador e as linhas de
+        tratativa, que não mudam quando só um campo do cabeçalho é
+        editado."""
+        nota = self.nota_row
+        self.txt_cabecalho.configure(state="normal")
+        self.txt_cabecalho.delete("1.0", tk.END)
+        for texto, negrito in montar_segmentos_cabecalho(nota):
+            self.txt_cabecalho.insert(tk.END, texto, ("negrito",) if negrito else ())
+        self.txt_cabecalho.configure(state="disabled", insertwidth=0)
+        self.txt_cabecalho.bind("<Button-1>", self._copiar_nf)
+        self.txt_cabecalho.bind("<Button-3>", self._abrir_menu)
+        self.txt_cabecalho.bind("<Double-Button-1>", self._adicionar_tratativa)
+        self._ajustar_altura_cabecalho()
 
     def _ajustar_altura_cabecalho(self):
         try:
@@ -145,8 +155,13 @@ class NotaBlock(ttk.Frame):
         self.app.selecionar_nota(self.nota_id, rolar=False)
 
     def atualizar(self, nota_row):
+        """Atualiza este bloco com os novos dados da nota após a edição de
+        um campo (ocorrência, sigla, NF, cliente, etc.). Só o cabeçalho é
+        reescrito — o separador e as linhas de tratativa já existentes
+        mantêm seus widgets e estado intactos, já que nenhum desses dados
+        muda numa edição de campo."""
         self.nota_row = nota_row
-        self._montar()
+        self._atualizar_cabecalho()
 
     def _copiar_nf(self, event=None):
         self._selecionar()
@@ -938,12 +953,23 @@ class App(tk.Tk):
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(bloco.winfo_y() / max(self.frame_lista.winfo_height(), 1))
 
-    def atualizar_scrollregion(self):
+    def atualizar_scrollregion(self, forcar_repintura=True):
         """Resincroniza a área rolável do canvas com o conteúdo atual, sem
         reconstruir a lista inteira (usado após inserções pontuais, como uma
-        nova tratativa ou uma nova nota, para manter a inserção rápida)."""
+        nova tratativa ou uma nova nota, para manter a inserção rápida).
+
+        forcar_repintura=True chama canvas.update() (repintura completa e
+        imediata): necessário quando widgets ACABARAM DE SER CRIADOS, senão
+        o bloco novo reserva o espaço certo mas fica com o conteúdo
+        (tratativas) sem desenhar até o usuário redimensionar a janela.
+        Widgets que já existem na tela (edição de campo, redimensionamento)
+        não precisam dessa repintura forçada: passam forcar_repintura=False
+        para evitar esse custo extra em uma operação que deveria ser rápida.
+        """
         self.frame_lista.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        if forcar_repintura:
+            self.canvas.update()
 
     def selecionar_nota(self, nota_id, rolar=True):
         anterior = self.blocos.get(self.nota_selecionada_id)
@@ -1059,6 +1085,7 @@ class App(tk.Tk):
         scrollbar.pack(side="right", fill="y")
 
         self._largura_lista_atual = 760
+        self._redimensionar_job = None
         self.canvas.bind("<Configure>", self._ao_redimensionar_lista)
 
         self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-e.delta / 120), "units"))
@@ -1071,11 +1098,53 @@ class App(tk.Tk):
     def _ao_redimensionar_lista(self, event):
         """Mantem o conteudo da lista de notas ajustado a largura da janela,
         para que o texto dos blocos quebre a linha corretamente em vez de
-        ficar cortado quando a janela e estreitada."""
-        self.canvas.itemconfig(self._frame_lista_janela, width=event.width)
-        self._largura_lista_atual = max(event.width - 24, 200)
+        ficar cortado quando a janela e estreitada.
+
+        O Tkinter dispara <Configure> repetidamente durante o arraste do
+        mouse (varias vezes por segundo), inclusive quando so a ALTURA da
+        janela mudou (ex.: arrastar so a borda inferior). Dois cuidados
+        evitam trabalho desnecessario: (1) eventos que nao mudam a largura
+        util sao descartados na hora, sem nenhum reflow; (2) quando a
+        largura muda de verdade, o reflow de cada bloco (que recalcula
+        quebra de linha e altura) so roda uma vez, apos o usuario parar de
+        arrastar, em vez de a cada evento intermediario.
+
+        Usa canvas.winfo_width() (a largura real e atual do widget) em vez
+        de event.width: num redimensionamento composto de mover+redimensionar
+        a janela de uma vez (Windows+seta para encaixar na metade da tela),
+        o valor de event.width de um <Configure> isolado pode nao refletir
+        ainda a largura final do canvas, o que deixava o conteudo da lista
+        com a largura/posicao internas dessincronizadas da largura real da
+        tela (texto cortado/deslocado). Tambem garante que a area rolavel
+        nunca fique deslocada horizontalmente (este canvas so tem rolagem
+        vertical; sem isso, um deslocamento horizontal indevido nao tinha
+        como ser corrigido pelo usuario, pois nao existe barra horizontal)."""
+        largura_canvas = self.canvas.winfo_width()
+        self.canvas.itemconfig(self._frame_lista_janela, width=largura_canvas)
+        self.canvas.xview_moveto(0.0)
+        largura_nova = max(largura_canvas - 24, 200)
+        if largura_nova == self._largura_lista_atual:
+            return  # so a altura da janela mudou; nada para reajustar
+        self._largura_lista_atual = largura_nova
+        if self._redimensionar_job is not None:
+            self.after_cancel(self._redimensionar_job)
+        self._redimensionar_job = self.after(80, self._aplicar_redimensionamento_blocos)
+
+    def _aplicar_redimensionamento_blocos(self):
+        """Roda uma unica vez, 80ms depois do ultimo evento <Configure> (ou
+        seja, uma unica vez por redimensionamento, nao a cada evento). Por
+        isso pode pedir a repintura completa (forcar_repintura=True) sem
+        custo perceptivel: redimensionamentos abruptos — Win+seta para
+        encaixar a janela na metade da tela, ou soltar um arrasto rapido —
+        pulam de largura de uma vez só, e sem essa repintura forçada aqui o
+        Tkinter no Windows podia deixar a tela com conteúdo sobreposto/
+        desatualizado até alguma outra ação forçar um redesenho."""
+        self._redimensionar_job = None
+        largura = self._largura_lista_atual
         for bloco in self.blocos.values():
-            bloco.atualizar_largura(self._largura_lista_atual)
+            bloco.atualizar_largura(largura)
+        self.atualizar_scrollregion(forcar_repintura=True)
+        self.canvas.xview_moveto(0.0)
 
     def obter_largura_lista(self):
         return getattr(self, "_largura_lista_atual", 760)
@@ -1188,7 +1257,33 @@ class App(tk.Tk):
             if self.nota_selecionada_id == nota_id:
                 self.nota_selecionada_id = None
             bloco.destroy()
-            self.atualizar_scrollregion()
+            self.atualizar_scrollregion(forcar_repintura=False)
+        if hasattr(self, "combo_filtro"):
+            self._atualizar_combobox_filtro()
+
+    def _atualizar_bloco_rapido(self, nota_id):
+        """Atualiza na tela somente o bloco da nota editada, sem reconstruir
+        a lista inteira — é essa reconstrução total (recarregar_lista) que
+        fazia uma edição pontual (ocorrência, sigla, etc.) demorar quando
+        havia muitas notas ativas, pois destruía e recriava todos os blocos
+        e reconsultava o banco inteiro por causa de uma única nota."""
+        filtro_atual = self.var_filtro.get() if hasattr(self, "var_filtro") else self.OPCAO_TODAS
+        if filtro_atual.strip().upper() == "AGENDAMENTO":
+            # Esse filtro reordena pela data do agendamento; precisa do
+            # caminho completo para recalcular a posição na lista.
+            self.recarregar_lista()
+            return
+        nota = db.obter_nota(nota_id)
+        bloco = self.blocos.get(nota_id)
+        if nota is None:
+            if bloco is not None:
+                self._remover_bloco_rapido(nota_id)
+            return
+        if bloco is not None:
+            bloco.atualizar(nota)
+            self.atualizar_scrollregion(forcar_repintura=False)
+        else:
+            self._adicionar_bloco_rapido(nota)
         if hasattr(self, "combo_filtro"):
             self._atualizar_combobox_filtro()
 
@@ -1209,7 +1304,10 @@ class App(tk.Tk):
         elif campo in ("cliente", "sigla"):
             novo = novo.strip().upper()
         db.atualizar_campo_nota(nota_id, campo, novo)
-        self.recarregar_lista()
+        cliente_atual = novo if campo == "cliente" else nota["cliente"]
+        sigla_atual = novo if campo == "sigla" else nota["sigla"]
+        self._garantir_visibilidade(cliente_atual, sigla_atual, nota["ocorrencia"])
+        self._atualizar_bloco_rapido(nota_id)
 
     def editar_ocorrencia(self, nota_id):
         nota = db.obter_nota(nota_id)
@@ -1229,4 +1327,4 @@ class App(tk.Tk):
                 return
         db.atualizar_campo_nota(nota_id, "ocorrencia", ocorrencia_final)
         self._garantir_visibilidade(nota["cliente"], nota["sigla"], ocorrencia_final)
-        self.recarregar_lista()
+        self._atualizar_bloco_rapido(nota_id)
