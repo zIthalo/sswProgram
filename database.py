@@ -152,6 +152,25 @@ def init_db():
     # e no historico para letras maiusculas.
     _migrar_ocorrencias_maiusculas(cur)
     conn.commit()
+
+    # Migracao: regra de negocio "nao pode haver duas Notas Fiscais
+    # cadastradas com o mesmo numero para o mesmo remetente". Cria um indice
+    # UNIQUE no banco (nao so uma checagem em Python), para que a restricao
+    # valha mesmo em caso de concorrencia (duas insercoes quase simultaneas).
+    # Se o banco ja tiver dados antigos (de antes dessa regra existir) que
+    # violem essa unicidade, a criacao do indice falha com IntegrityError —
+    # nesse caso nao apagamos nem alteramos nenhum dado do usuario
+    # automaticamente; a regra continua sendo garantida para INSERCOES
+    # NOVAS pela checagem feita em existe_nf_cliente()/inserir_nota().
+    try:
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_notas_nf_cliente
+            ON notas(nf_numero, cliente)
+        """)
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+
     conn.close()
 
 
@@ -208,15 +227,46 @@ def _migrar_ocorrencias_maiusculas(cur):
 # CRUD de notas
 # ---------------------------------------------------------------------------
 
+class NotaDuplicadaError(Exception):
+    """Levantada ao tentar inserir uma Nota Fiscal cujo numero ja esta
+    cadastrado para o mesmo remetente — regra de unicidade NF + Remetente.
+    Serve de ultima linha de defesa contra concorrencia (duas insercoes
+    quase simultaneas passando pela checagem em existe_nf_cliente() antes
+    de qualquer uma delas commitar): quem acionar o INSERT depois do outro
+    esbarra no indice UNIQUE do banco e recebe esta excecao."""
+    pass
+
+
+MENSAGEM_NF_DUPLICADA = "Já existe uma Nota Fiscal cadastrada com este número para este remetente."
+
+
+def existe_nf_cliente(nf_numero, cliente):
+    """Verifica a regra de unicidade de negocio: nao pode haver duas Notas
+    Fiscais cadastradas com o mesmo numero para o mesmo remetente — vale
+    para o sistema inteiro (nota ativa ou ja resolvida), nao so para notas
+    em aberto. Retorna a nota existente (sqlite3.Row) ou None."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM notas WHERE nf_numero=? AND cliente=?", (nf_numero, cliente))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
 def inserir_nota(nf_numero, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data=None):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO notas (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-                            criado_em, resolvido, agendamento_data)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-    """, (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-          datetime.now().isoformat(), agendamento_data))
+    try:
+        cur.execute("""
+            INSERT INTO notas (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
+                                criado_em, resolvido, agendamento_data)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+        """, (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
+              datetime.now().isoformat(), agendamento_data))
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        conn.close()
+        raise NotaDuplicadaError(MENSAGEM_NF_DUPLICADA)
     conn.commit()
     novo_id = cur.lastrowid
     conn.close()

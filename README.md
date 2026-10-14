@@ -298,6 +298,63 @@ ao lado do `.exe` na primeira execução.
     horizontal. Ambas as correções são de custo fixo (não crescem com a
     quantidade de notas ativas), então não afetam o ganho de desempenho dos
     itens 15 e 16.
+18. **Atalhos de edição (Ctrl+Z, Ctrl+Y, Ctrl+Backspace, Ctrl+Delete) na tela
+    de "Nova atualização"**: essa tela usava o campo de entrada padrão do
+    Tkinter (`simpledialog.askstring`), que não tem pilha de desfazer/refazer
+    e não garante os atalhos de apagar palavra inteira. Criado um diálogo
+    próprio (`CampoTextoComAtalhos`, em `dialogs.py`) baseado num campo de
+    texto de uma linha com desfazer/refazer habilitado, com os quatro
+    atalhos implementados explicitamente. Visualmente e no uso (Enter
+    confirma, Esc cancela) continua se comportando como antes.
+19. **Correção de ocorrências "sumindo" ao trocar o filtro e voltar para
+    "Todas as ocorrências"**: a causa raiz era reentrância em
+    `recarregar_lista()`. Essa função termina chamando `canvas.update()`
+    (necessário para o conteúdo pintar corretamente — ver item 14), e
+    `update()` processa toda a fila de eventos pendente do Tcl, não só
+    geometria. Se o usuário trocasse o filtro rápido o suficiente, um
+    segundo evento de troca de filtro podia já estar enfileirado nesse
+    momento e ser processado por esse `update()`, reentrando em
+    `recarregar_lista()` ANTES da primeira chamada terminar — destruindo e
+    recriando os blocos no meio do processo. Combinado com um segundo
+    problema (blocos criados fora da área visível não eram repintados ao
+    serem rolados para dentro da tela — mesma classe de bug do item 14, só
+    que disparada pela rolagem em vez da inserção), isso produzia os blocos
+    duplicados/com cabeçalho ausente relatados, que só se resolviam ao
+    clicar em "Limpar filtro" (mais uma chamada a `recarregar_lista()`, que
+    por acaso rodava depois que a fila de eventos já tinha esvaziado).
+    Duas correções: (1) `recarregar_lista()` ganhou uma guarda de
+    reentrância — uma chamada que chega enquanto outra já está em andamento
+    só marca que é preciso recarregar de novo ao final, em vez de
+    destruir/recriar os blocos no meio da execução atual; (2) a rolagem
+    (roda do mouse e barra de rolagem) agora força uma repintura completa
+    uma única vez, 80ms depois que o usuário para de rolar (mesmo padrão de
+    debounce já usado no redimensionamento), garantindo que o conteúdo
+    recém-exposto seja realmente desenhado.
+20. **Regra de unicidade: Número da NF + Remetente**: o sistema não permite
+    mais cadastrar duas Notas Fiscais com o mesmo número para o mesmo
+    remetente — vale para o sistema inteiro (nota ativa ou já resolvida),
+    não só para notas em aberto. A checagem acontece na tela (antes mesmo
+    de pedir ocorrência/sigla, assim que NF e remetente são informados,
+    mostrando "Já existe uma Nota Fiscal cadastrada com este número para
+    este remetente.") e também no banco de dados, com um índice UNIQUE em
+    `(nf_numero, cliente)`, que protege contra duas inserções quase
+    simultâneas (concorrência). Se o banco já tiver dados antigos (de antes
+    dessa regra existir) que violem essa unicidade, a criação do índice é
+    automaticamente pulada sem apagar nem alterar nada — nesse caso a regra
+    continua valendo para notas novas através da checagem feita na tela,
+    mas sem a proteção extra de concorrência do banco (aplicável apenas a
+    quem nunca teve NFs duplicadas cadastradas antes desta versão).
+
+21. **Centralização da janela "Nova atualização"**: ao calcular os atalhos de
+    teclado (item 18), a posição da janela de "Nova atualização" (e de
+    qualquer outra janela baseada em `CampoTextoComAtalhos`) passou a usar um
+    deslocamento fixo (`+60+60` a partir do canto da janela principal), o que
+    fazia a janela aparecer deslocada para o canto superior esquerdo em vez
+    de centralizada. Corrigido para calcular a posição com base no tamanho
+    real da janela de diálogo e no tamanho/posição da janela principal
+    (`winfo_width`/`winfo_height`/`winfo_rootx`/`winfo_rooty`), centralizando
+    a janela de diálogo sobre a janela principal do sistema, como era antes —
+    mantendo o mesmo tamanho da janela.
 
 ## Próximos passos sugeridos
 
