@@ -1,0 +1,24 @@
+# Banco de dados do usuario -- NUNCA deve ser versionado. Ele contem dados
+# reais de notas fiscais/clientes e, alem disso, se for commitado, um novo
+# usuario que baixe o repositorio herdaria dados que nao sao dele.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Saida do PyInstaller (gerada localmente a cada build, nao faz sentido
+# versionar - quem precisa dos .exe pronto baixa pelo GitHub Releases)
+build/
+dist/
+*.exe
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Arquivos de editor/SO comuns
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
