@@ -12,7 +12,7 @@ from datetime import datetime
 import database as db
 import dateutils
 import occorrencias as occ
-from dialogs import GerenciarLista, editar_campo_texto, fluxo_marcar_resolvido
+from dialogs import GerenciarLista, editar_campo_texto, fluxo_marcar_resolvido, pedir_texto_atualizacao
 
 
 def dias_em_tratativas(criado_em_iso):
@@ -172,10 +172,10 @@ class NotaBlock(ttk.Frame):
         return "break"
 
     def _adicionar_tratativa(self, event=None):
-        texto = simpledialog.askstring(
+        texto = pedir_texto_atualizacao(
+            self.app,
             "Nova atualização",
             "Descreva a atualização da tratativa para a NF %s:" % self.nota_row["nf_numero"],
-            parent=self.app,
         )
         if texto:
             texto = texto.strip().upper()
@@ -731,6 +731,19 @@ class App(tk.Tk):
             messagebox.showerror("Erro", "Informe o cliente/remetente.")
             return
 
+        # Regra de unicidade: nao pode haver duas NFs cadastradas com o
+        # mesmo numero para o mesmo remetente (vale para o sistema inteiro,
+        # nao so para notas em aberto). Checada aqui ANTES de pedir
+        # ocorrencia/agendamento, para nao fazer o usuario preencher o
+        # resto do formulario so para descobrir depois que e duplicada.
+        existente = db.existe_nf_cliente(nf, cliente)
+        if existente:
+            messagebox.showerror("Nota Fiscal duplicada", db.MENSAGEM_NF_DUPLICADA)
+            if existente["resolvido"] == 0:
+                self.recarregar_lista()
+                self._destacar_nota(existente["id"])
+            return
+
         ocorrencia_digitada = self.var_ocorrencia.get().strip().upper()
         if not ocorrencia_digitada:
             messagebox.showerror("Erro", "Informe a ocorrência.")
@@ -755,13 +768,6 @@ class App(tk.Tk):
 
         data_ocorrencia = dateutils.parse_data_usuario("0")
 
-        duplicada = db.buscar_duplicada(nf, cliente, ocorrencia)
-        if duplicada:
-            messagebox.showinfo("Duplicidade", "Esta NF e remetente já foram inseridos no sistema.")
-            self.recarregar_lista()
-            self._destacar_nota(duplicada["id"])
-            return
-
         agendamento_data = None
         if occ.eh_ocorrencia_agendamento(ocorrencia):
             data_ag = simpledialog.askstring(
@@ -778,7 +784,16 @@ class App(tk.Tk):
                 messagebox.showerror("Erro", "A data do agendamento é igual ou inferior a data atual.")
                 return
 
-        novo_id = db.inserir_nota(nf, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data)
+        try:
+            novo_id = db.inserir_nota(nf, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data)
+        except db.NotaDuplicadaError:
+            # Defesa contra concorrencia: a checagem existe_nf_cliente() acima
+            # ja cobre o caso comum, mas se outra insercao da MESMA NF+remetente
+            # tiver commitado entre essa checagem e este INSERT, o indice
+            # UNIQUE do banco pega o caso e cai aqui.
+            messagebox.showerror("Nota Fiscal duplicada", db.MENSAGEM_NF_DUPLICADA)
+            self.recarregar_lista()
+            return
 
         if cliente.lower() not in [c.lower() for c in db.listar_clientes()]:
             db.adicionar_cliente(cliente)
@@ -952,6 +967,12 @@ class App(tk.Tk):
             return
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(bloco.winfo_y() / max(self.frame_lista.winfo_height(), 1))
+        # Rolagem pontual (navegacao por teclado, Ctrl+F): forca a repintura
+        # imediatamente, ja que e uma unica chamada, nao um fluxo continuo
+        # de eventos como arrastar a barra ou girar a roda do mouse — ver
+        # _agendar_repintura_pos_rolagem para a explicacao do porque isso e
+        # necessario.
+        self.canvas.update()
 
     def atualizar_scrollregion(self, forcar_repintura=True):
         """Resincroniza a área rolável do canvas com o conteúdo atual, sem
@@ -1073,7 +1094,7 @@ class App(tk.Tk):
         container.pack(fill="both", expand=True, padx=10, pady=(4, 10))
 
         self.canvas = tk.Canvas(container, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self._ao_rolar_lista)
         self.frame_lista = ttk.Frame(self.canvas)
 
         self.frame_lista.bind(
@@ -1088,7 +1109,8 @@ class App(tk.Tk):
         self._redimensionar_job = None
         self.canvas.bind("<Configure>", self._ao_redimensionar_lista)
 
-        self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-e.delta / 120), "units"))
+        self._rolagem_job = None
+        self.canvas.bind_all("<MouseWheel>", self._ao_rolar_roda_mouse)
 
         self.canvas.bind("<Up>", lambda e: self._mover_selecao(-1))
         self.canvas.bind("<Down>", lambda e: self._mover_selecao(1))
@@ -1149,7 +1171,88 @@ class App(tk.Tk):
     def obter_largura_lista(self):
         return getattr(self, "_largura_lista_atual", 760)
 
+    def _ao_rolar_lista(self, *args):
+        """Chamado pela barra de rolagem (arrastar o 'thumb' ou clicar nela).
+        Ver _agendar_repintura_pos_rolagem para o motivo de disparar uma
+        repintura apos a rolagem."""
+        self.canvas.yview(*args)
+        self._agendar_repintura_pos_rolagem()
+
+    def _ao_rolar_roda_mouse(self, event):
+        """Chamado pela roda do mouse sobre a lista. Ver
+        _agendar_repintura_pos_rolagem para o motivo de disparar uma
+        repintura apos a rolagem."""
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        self._agendar_repintura_pos_rolagem()
+
+    def _agendar_repintura_pos_rolagem(self):
+        """Garante que o conteudo recem-exposto pela rolagem seja realmente
+        desenhado na tela.
+
+        Blocos criados fora da area visivel (ex.: logo apos recarregar_lista
+        trocar o filtro, com a lista tendo muito mais notas do que cabe na
+        tela) ficam, no Windows, com o cabecalho e o separador sem pintar
+        ate alguma acao forcar um redesenho completo — o mesmo tipo de bug
+        ja visto antes com blocos recem-inseridos (ver item 14 do README),
+        so que agora exposto pela ROLAGEM em vez da insercao. Rolar sozinho
+        (canvas.yview/yview_scroll) so reposiciona a janela de visualizacao;
+        nao hA garantia de repintura completa do conteudo recem-exposto.
+
+        Por isso, uma unica vez, apos o usuario parar de rolar (debounce de
+        80ms, igual ao usado no redimensionamento), forcamos uma repintura
+        completa (canvas.update()). Fazer isso a cada evento de rolagem
+        seria caro com muitas notas ativas; feito uma unica vez ao final,
+        o custo e desprezivel."""
+        if self._rolagem_job is not None:
+            self.after_cancel(self._rolagem_job)
+        self._rolagem_job = self.after(80, self._repintar_apos_rolagem)
+
+    def _repintar_apos_rolagem(self):
+        self._rolagem_job = None
+        self.canvas.update()
+
     def recarregar_lista(self, resetar_scroll=False):
+        """Reconstroi a lista inteira a partir do banco (usado ao trocar de
+        filtro, entre outros casos).
+
+        Esta funcao termina chamando atualizar_scrollregion(), que no
+        caminho forcar_repintura=True executa canvas.update() — e
+        update() (diferente de update_idletasks()) processa TODA a fila de
+        eventos pendente do Tcl, nao so geometria. Se o usuario trocar o
+        filtro de novo rapido o suficiente para um segundo evento de troca
+        de filtro ja estar enfileirado nesse momento, esse canvas.update()
+        reentraria direto em recarregar_lista() ANTES desta chamada
+        terminar, destruindo/recriando os blocos no meio do processo —
+        exatamente o que produzia blocos duplicados/com cabecalho ausente
+        na tela ate o usuario clicar em "Limpar filtro" (que, por coincidencia,
+        e so mais uma chamada a recarregar_lista(), e funcionava por rodar
+        depois que a fila de eventos jah tinha se esvaziado).
+
+        A guarda abaixo torna essas chamadas sequenciais em vez de
+        aninhadas: uma chamada que chega enquanto outra ja esta em
+        andamento so marca que e preciso recarregar de novo ao final, em
+        vez de destruir/recriar os blocos no meio da execucao atual. Isso
+        garante que o estado final sempre reflita o ultimo filtro
+        selecionado, sem nunca deixar dois conjuntos de blocos coexistindo
+        na tela."""
+        if getattr(self, "_recarregando_lista", False):
+            self._recarregar_lista_pendente = True
+            self._recarregar_lista_pendente_resetar_scroll = (
+                resetar_scroll or getattr(self, "_recarregar_lista_pendente_resetar_scroll", False)
+            )
+            return
+        self._recarregando_lista = True
+        try:
+            self._recarregar_lista_impl(resetar_scroll)
+        finally:
+            self._recarregando_lista = False
+            if getattr(self, "_recarregar_lista_pendente", False):
+                self._recarregar_lista_pendente = False
+                resetar_pendente = self._recarregar_lista_pendente_resetar_scroll
+                self._recarregar_lista_pendente_resetar_scroll = False
+                self.recarregar_lista(resetar_scroll=resetar_pendente)
+
+    def _recarregar_lista_impl(self, resetar_scroll=False):
         for widget in self.frame_lista.winfo_children():
             widget.destroy()
         self.blocos = {}

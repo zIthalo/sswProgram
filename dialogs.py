@@ -103,6 +103,111 @@ def editar_campo_texto(master, titulo, rotulo, valor_atual):
     return simpledialog.askstring(titulo, rotulo, initialvalue=valor_atual, parent=master)
 
 
+class CampoTextoComAtalhos(tk.Toplevel):
+    """
+    Dialogo de entrada de texto de uma linha com suporte a desfazer/refazer
+    (Ctrl+Z / Ctrl+Y) e apagar a palavra inteira antes/depois do cursor
+    (Ctrl+Backspace / Ctrl+Delete) — atalhos que o Entry padrao usado por
+    simpledialog.askstring nao oferece (Entry nao tem pilha de desfazer).
+
+    Usa um tk.Text de uma unica linha (height=1, wrap="none") em vez de
+    Entry, pois soh o Text do Tkinter tem pilha de desfazer/refazer
+    embutida (habilitada aqui via undo=True). Visualmente e no fluxo de
+    uso (Enter confirma, Esc cancela) se comporta como o campo de uma
+    linha anterior.
+
+    Resultado fica em self.resultado: a string digitada, ou None se o
+    usuario cancelar (Esc, botao Cancelar ou fechar a janela).
+    """
+
+    def __init__(self, master, titulo, rotulo, valor_inicial=""):
+        super().__init__(master)
+        self.title(titulo)
+        self.resizable(False, False)
+        self.resultado = None
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text=rotulo, wraplength=380, justify="left").pack(anchor="w", pady=(0, 8))
+
+        self.texto = tk.Text(frame, height=1, width=48, wrap="none", undo=True,
+                              font=("Consolas", 10))
+        self.texto.pack(fill="x")
+        if valor_inicial:
+            self.texto.insert("1.0", valor_inicial)
+        self.texto.edit_reset()  # o preenchimento inicial nao deve entrar na pilha de desfazer
+        self.texto.mark_set("insert", "end")
+        self.texto.focus_set()
+
+        botoes = ttk.Frame(frame)
+        botoes.pack(fill="x", pady=(12, 0))
+        ttk.Button(botoes, text="OK", command=self._confirmar).pack(side="right")
+        ttk.Button(botoes, text="Cancelar", command=self._cancelar).pack(side="right", padx=(0, 6))
+
+        self.texto.bind("<Return>", self._confirmar)
+        self.texto.bind("<KP_Enter>", self._confirmar)
+        self.texto.bind("<Escape>", self._cancelar)
+        self.texto.bind("<Control-z>", self._desfazer)
+        self.texto.bind("<Control-Z>", self._desfazer)
+        self.texto.bind("<Control-y>", self._refazer)
+        self.texto.bind("<Control-Y>", self._refazer)
+        self.texto.bind("<Control-BackSpace>", self._apagar_palavra_tras)
+        self.texto.bind("<Control-Delete>", self._apagar_palavra_frente)
+
+        self.protocol("WM_DELETE_WINDOW", self._cancelar)
+        self.transient(master)
+        self.update_idletasks()
+        largura = self.winfo_reqwidth()
+        altura = self.winfo_reqheight()
+        pos_x = master.winfo_rootx() + (master.winfo_width() // 2) - (largura // 2)
+        pos_y = master.winfo_rooty() + (master.winfo_height() // 2) - (altura // 2)
+        self.geometry("+%d+%d" % (max(pos_x, 0), max(pos_y, 0)))
+        self.wait_window(self)
+
+    def _confirmar(self, event=None):
+        self.resultado = self.texto.get("1.0", "end-1c")
+        self.destroy()
+        return "break"
+
+    def _cancelar(self, event=None):
+        self.resultado = None
+        self.destroy()
+        return "break"
+
+    def _desfazer(self, event=None):
+        try:
+            self.texto.edit_undo()
+        except tk.TclError:
+            pass  # pilha de desfazer vazia; nada a fazer
+        return "break"
+
+    def _refazer(self, event=None):
+        try:
+            self.texto.edit_redo()
+        except tk.TclError:
+            pass  # pilha de refazer vazia; nada a fazer
+        return "break"
+
+    def _apagar_palavra_tras(self, event=None):
+        inicio = self.texto.index("insert -1c wordstart")
+        self.texto.delete(inicio, "insert")
+        return "break"
+
+    def _apagar_palavra_frente(self, event=None):
+        fim = self.texto.index("insert wordend")
+        self.texto.delete("insert", fim)
+        return "break"
+
+
+def pedir_texto_atualizacao(master, titulo, rotulo, valor_inicial=""):
+    """Usada no lugar de simpledialog.askstring onde o usuario precisa de
+    desfazer/refazer (Ctrl+Z/Ctrl+Y) e apagar palavra inteira
+    (Ctrl+Backspace/Ctrl+Delete) — recursos que o Entry padrao nao oferece."""
+    return CampoTextoComAtalhos(master, titulo, rotulo, valor_inicial).resultado
+
+
 class GerenciarLista(tk.Toplevel):
     """
     Janela generica para gerenciar listas editaveis (empresas parceiras / tipos de ocorrencia).
