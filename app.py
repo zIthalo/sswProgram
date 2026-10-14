@@ -5,13 +5,16 @@ Aplicacao principal em Tkinter (biblioteca padrao do Python - compativel com
 Windows 7 ou superior, e portavel para Linux sem alteracoes).
 """
 
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 
+import atualizacoes
 import database as db
 import dateutils
 import occorrencias as occ
+import versao
 from dialogs import GerenciarLista, editar_campo_texto, fluxo_marcar_resolvido, pedir_texto_atualizacao
 
 
@@ -246,6 +249,12 @@ class App(tk.Tk):
         self._configurar_atalhos_edicao()
         self.bind_all("<Control-f>", self._focar_busca)
 
+        # Verificacao de atualizacao em segundo plano: nao deve atrasar a
+        # abertura do sistema nem travar a interface, por isso roda numa
+        # thread separada e so volta a mexer na tela (via self.after) se
+        # encontrar uma versao nova.
+        self.after(1500, self._verificar_atualizacoes_automatico)
+
     # ------------------------------------------------------------------
     # Menu superior
     # ------------------------------------------------------------------
@@ -253,6 +262,8 @@ class App(tk.Tk):
         barra = tk.Menu(self)
 
         m_arquivo = tk.Menu(barra, tearoff=0)
+        m_arquivo.add_command(label="Verificar atualizações...", command=self._verificar_atualizacoes_manual)
+        m_arquivo.add_separator()
         m_arquivo.add_command(label="Sair", command=self.destroy)
         barra.add_cascade(label="Arquivo", menu=m_arquivo)
 
@@ -269,6 +280,101 @@ class App(tk.Tk):
         barra.add_command(label="Histórico", command=self._abrir_historico)
 
         self.config(menu=barra)
+
+    # ------------------------------------------------------------------
+    # Verificação de atualizações (GitHub Releases)
+    # ------------------------------------------------------------------
+    def _verificar_atualizacoes_automatico(self):
+        """Checagem silenciosa feita ao abrir o sistema: roda numa thread
+        separada (para não travar a tela) e só interrompe o usuário se
+        encontrar uma versão mais nova. Qualquer falha (sem internet, etc.)
+        é ignorada sem aviso nenhum."""
+        def tarefa():
+            info = atualizacoes.verificar_nova_versao()
+            if info:
+                self.after(0, lambda: self._perguntar_se_atualiza(info, manual=False))
+        threading.Thread(target=tarefa, daemon=True).start()
+
+    def _verificar_atualizacoes_manual(self):
+        """Checagem disparada pelo menu Arquivo > Verificar atualizações:
+        mostra o resultado mesmo quando não há nada novo."""
+        def tarefa():
+            info = atualizacoes.verificar_nova_versao()
+            self.after(0, lambda: self._mostrar_resultado_verificacao_manual(info))
+        threading.Thread(target=tarefa, daemon=True).start()
+
+    def _mostrar_resultado_verificacao_manual(self, info):
+        if info:
+            self._perguntar_se_atualiza(info, manual=True)
+        else:
+            messagebox.showinfo(
+                "Verificar atualizações",
+                "Você já está usando a versão mais recente (%s)." % versao.VERSAO,
+                parent=self,
+            )
+
+    def _perguntar_se_atualiza(self, info, manual):
+        notas = ("\n\n%s" % info["notas"]) if info["notas"] else ""
+        confirmar = messagebox.askyesno(
+            "Nova versão disponível",
+            "Uma nova versão (%s) está disponível — você está usando a %s.%s\n\n"
+            "Deseja baixar e instalar agora? O sistema será fechado e reaberto "
+            "automaticamente ao final." % (info["versao"], versao.VERSAO, notas),
+            parent=self,
+        )
+        if confirmar:
+            self._baixar_e_aplicar_atualizacao(info)
+
+    def _baixar_e_aplicar_atualizacao(self, info):
+        janela = tk.Toplevel(self)
+        janela.title("Atualizando...")
+        janela.resizable(False, False)
+        janela.transient(self)
+        janela.protocol("WM_DELETE_WINDOW", lambda: None)  # não deixa fechar no meio do download
+        frame = ttk.Frame(janela, padding=16)
+        frame.pack(fill="both", expand=True)
+        rotulo = ttk.Label(frame, text="Baixando versão %s..." % info["versao"])
+        rotulo.pack(pady=(0, 8))
+        barra = ttk.Progressbar(frame, mode="determinate", length=280, maximum=100)
+        barra.pack()
+        janela.update_idletasks()
+        largura, altura = janela.winfo_reqwidth(), janela.winfo_reqheight()
+        janela.geometry("+%d+%d" % (
+            self.winfo_rootx() + (self.winfo_width() // 2) - (largura // 2),
+            self.winfo_rooty() + (self.winfo_height() // 2) - (altura // 2),
+        ))
+
+        def progresso(lido, total):
+            if total:
+                self.after(0, lambda: barra.configure(value=min(100, int(lido * 100 / total))))
+
+        def tarefa():
+            caminho = atualizacoes.baixar_novo_executavel(info, progresso_callback=progresso)
+            self.after(0, lambda: concluir(caminho))
+
+        def concluir(caminho):
+            janela.destroy()
+            if not caminho:
+                messagebox.showerror(
+                    "Falha ao atualizar",
+                    "Não foi possível baixar a nova versão. Verifique sua conexão com a "
+                    "internet e tente novamente pelo menu Arquivo > Verificar atualizações.",
+                    parent=self,
+                )
+                return
+            if atualizacoes.aplicar_atualizacao(caminho):
+                self.destroy()
+            else:
+                messagebox.showwarning(
+                    "Atualização automática indisponível",
+                    "O download foi concluído, mas a troca automática do executável só "
+                    "funciona na versão instalada (.exe) com o atualizador.exe presente na "
+                    "mesma pasta. Baixe e instale a nova versão manualmente em:\n%s"
+                    % versao.URL_RELEASES,
+                    parent=self,
+                )
+
+        threading.Thread(target=tarefa, daemon=True).start()
 
     def _gerenciar_empresas_parceiras(self):
         GerenciarLista(self, "Empresas parceiras", db.listar_empresas_parceiras,
