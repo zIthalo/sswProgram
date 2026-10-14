@@ -356,6 +356,55 @@ ao lado do `.exe` na primeira execução.
     a janela de diálogo sobre a janela principal do sistema, como era antes —
     mantendo o mesmo tamanho da janela.
 
+22. **Atualização automática via GitHub Releases**: o sistema agora verifica
+    sozinho, ao abrir (e também sob demanda em Arquivo > Verificar
+    atualizações...), se existe uma versão mais nova publicada no
+    repositório público do GitHub (`zIthalo/sswProgram`). Se houver, pergunta
+    ao usuário se quer atualizar agora; ao confirmar, baixa o `main.exe` novo,
+    fecha o sistema, substitui o executável antigo pelo novo e reabre tudo
+    automaticamente — sem precisar que o programador vá até o computador do
+    usuário. Detalhes técnicos e como publicar uma nova versão estão na seção
+    "Como publicar uma atualização", mais abaixo.
+
+## Como publicar uma atualização (GitHub Releases)
+
+O sistema verifica atualizações consultando a release mais recente do
+repositório público `zIthalo/sswProgram`. Para distribuir uma nova versão
+para todos os usuários sem precisar reinstalar manualmente em cada
+computador:
+
+1. **Suba a versão**: edite `versao.py` e troque o valor de `VERSAO` (ex.:
+   de `"1.0.0"` para `"1.1.0"`).
+2. **Gere o executável principal**: `pyinstaller --onefile --windowed main.py`
+   (ou `pyinstaller main.spec`). O arquivo sai em `dist/main.exe`.
+3. **Gere o atualizador** (só precisa ser feito uma vez, a não ser que o
+   próprio `atualizador.py` mude): `pyinstaller atualizador.spec`. O arquivo
+   sai em `dist/atualizador.exe`.
+4. **Primeira instalação de um computador novo**: copie `main.exe` e
+   `atualizador.exe` juntos, na mesma pasta, para o computador do usuário.
+   As atualizações seguintes acontecem sozinhas a partir daí — não é
+   necessário reenviar o `atualizador.exe` de novo, a menos que ele mesmo
+   tenha sido alterado (nesse caso, é a única situação que ainda exige ir
+   manualmente ao computador, já que o atualizador não se autoatualiza).
+5. **Publique a nova versão no GitHub**: na página do repositório, vá em
+   "Releases" → "Draft a new release". Em "Tag", use exatamente o mesmo
+   número definido no passo 1, com `v` na frente (ex.: `v1.1.0` para
+   `VERSAO = "1.1.0"`). Anexe o `main.exe` gerado no passo 2 como arquivo da
+   release (o `atualizador.exe` **não** precisa ser anexado aqui — ele já
+   está instalado localmente em cada computador). O texto da release
+   (changelog) aparece para o usuário na mensagem de confirmação da
+   atualização.
+6. Pronto — na próxima vez que cada computador abrir o sistema (ou se o
+   usuário clicar em "Verificar atualizações..."), ele vai detectar a nova
+   tag, perguntar se quer atualizar e, ao confirmar, baixar e trocar o
+   executável sozinho.
+
+**Importante**: a tag no GitHub e o `VERSAO` em `versao.py` precisam bater
+exatamente (só muda o `v` na frente). Se esquecer de atualizar o
+`versao.py` antes de gerar o `.exe`, o sistema instalado vai continuar
+pensando que está na versão antiga e vai ficar oferecendo a mesma
+atualização repetidamente.
+
 ## Próximos passos sugeridos
 
 - Empacotar com PyInstaller para gerar um instalador único para os
