@@ -1,0 +1,15 @@
+{
+  "cor_fonte": "",
+  "cor_fundo": "",
+  "cor_selecao": "#cfe8ff",
+  "negrito": {
+    "nf": false,
+    "cliente": true,
+    "ocorrencia": true,
+    "sigla": true,
+    "data_hora": false,
+    "dias": false,
+    "agendamento": true,
+    "observacao": false
+  }
+}
