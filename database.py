@@ -51,7 +51,8 @@ def init_db():
             data_ocorrencia TEXT NOT NULL,      -- ddmmyyyy, data em que a nota foi inserida
             criado_em TEXT NOT NULL,            -- timestamp ISO completo p/ ordenacao
             resolvido INTEGER NOT NULL DEFAULT 0,
-            agendamento_data TEXT               -- ddmmyyyy, data do agendamento (se aplicavel)
+            agendamento_data TEXT,              -- ddmmyyyy, data do agendamento (se aplicavel)
+            observacao TEXT                     -- texto livre opcional (tag/observacao da nota)
         )
     """)
 
@@ -108,6 +109,15 @@ def init_db():
     _migrar_remover_lembretes(cur)
     conn.commit()
 
+    # Migracao: adiciona a coluna 'observacao' (tag/observacao livre por nota)
+    # em bancos de versoes anteriores que ainda nao a possuem. ALTER TABLE
+    # ADD COLUMN e seguro aqui (SQLite so permite adicionar coluna nula no
+    # final da tabela, sem precisar recriar nada nem tocar nos dados existentes).
+    colunas_notas = [c["name"] for c in cur.execute("PRAGMA table_info(notas)").fetchall()]
+    if "observacao" not in colunas_notas:
+        cur.execute("ALTER TABLE notas ADD COLUMN observacao TEXT")
+    conn.commit()
+
     # Migracao: se a tabela historico for de uma versao anterior do sistema (sem a
     # coluna 'morosidade'), recria com o novo formato (dias/horas/morosidade).
     cur.execute("PRAGMA table_info(historico)")
@@ -153,19 +163,22 @@ def init_db():
     _migrar_ocorrencias_maiusculas(cur)
     conn.commit()
 
-    # Migracao: regra de negocio "nao pode haver duas Notas Fiscais
-    # cadastradas com o mesmo numero para o mesmo remetente". Cria um indice
-    # UNIQUE no banco (nao so uma checagem em Python), para que a restricao
-    # valha mesmo em caso de concorrencia (duas insercoes quase simultaneas).
-    # Se o banco ja tiver dados antigos (de antes dessa regra existir) que
-    # violem essa unicidade, a criacao do indice falha com IntegrityError —
-    # nesse caso nao apagamos nem alteramos nenhum dado do usuario
-    # automaticamente; a regra continua sendo garantida para INSERCOES
-    # NOVAS pela checagem feita em existe_nf_cliente()/inserir_nota().
+    # Migracao: regra de negocio "nao pode haver duas Notas Fiscais PENDENTES
+    # de tratativa com o mesmo numero para o mesmo remetente". Uma nota ja
+    # resolvida NAO bloqueia o cadastro de uma nova com o mesmo numero e
+    # remetente. Por isso o indice UNIQUE e PARCIAL (so vale onde
+    # resolvido=0) — a restricao continua sendo garantida pelo proprio banco,
+    # inclusive em caso de concorrencia.
+    # Versoes anteriores criaram um indice UNIQUE global (idx_notas_nf_cliente),
+    # que impedia reinserir uma NF ja resolvida; ele e removido aqui. Nenhum
+    # dado e apagado ou alterado. Se existirem duas notas PENDENTES iguais
+    # (dados antigos), a criacao do novo indice falha com IntegrityError e e
+    # pulada; a regra segue valendo para insercoes novas via existe_nf_cliente().
+    cur.execute("DROP INDEX IF EXISTS idx_notas_nf_cliente")
     try:
         cur.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_notas_nf_cliente
-            ON notas(nf_numero, cliente)
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_notas_nf_cliente_pendente
+            ON notas(nf_numero, cliente) WHERE resolvido = 0
         """)
         conn.commit()
     except sqlite3.IntegrityError:
@@ -192,16 +205,19 @@ def _migrar_remover_lembretes(cur):
                 data_ocorrencia TEXT NOT NULL,
                 criado_em TEXT NOT NULL,
                 resolvido INTEGER NOT NULL DEFAULT 0,
-                agendamento_data TEXT
+                agendamento_data TEXT,
+                observacao TEXT
             )
         """)
+        colunas_origem = [c["name"] for c in cur.execute("PRAGMA table_info(notas)").fetchall()]
+        campo_observacao = "observacao" if "observacao" in colunas_origem else "NULL"
         cur.execute("""
             INSERT INTO notas_novo (id, nf_numero, cliente, ocorrencia, sigla,
-                                     data_ocorrencia, criado_em, resolvido, agendamento_data)
+                                     data_ocorrencia, criado_em, resolvido, agendamento_data, observacao)
             SELECT id, nf_numero, cliente, ocorrencia, sigla,
-                   data_ocorrencia, criado_em, resolvido, agendamento_data
+                   data_ocorrencia, criado_em, resolvido, agendamento_data, %s
             FROM notas
-        """)
+        """ % campo_observacao)
         cur.execute("DROP TABLE notas")
         cur.execute("ALTER TABLE notas_novo RENAME TO notas")
     cur.execute("DROP TABLE IF EXISTS alertas_disparados")
@@ -237,32 +253,35 @@ class NotaDuplicadaError(Exception):
     pass
 
 
-MENSAGEM_NF_DUPLICADA = "Já existe uma Nota Fiscal cadastrada com este número para este remetente."
+MENSAGEM_NF_DUPLICADA = ("Já existe uma Nota Fiscal pendente de tratativa com este número para este "
+                         "remetente. Resolva a anterior antes de cadastrá-la novamente.")
 
 
 def existe_nf_cliente(nf_numero, cliente):
     """Verifica a regra de unicidade de negocio: nao pode haver duas Notas
-    Fiscais cadastradas com o mesmo numero para o mesmo remetente — vale
-    para o sistema inteiro (nota ativa ou ja resolvida), nao so para notas
-    em aberto. Retorna a nota existente (sqlite3.Row) ou None."""
+    Fiscais PENDENTES de tratativa com o mesmo numero para o mesmo
+    remetente. Notas ja resolvidas nao contam — o usuario pode cadastrar
+    de novo uma NF que ja foi resolvida. Retorna a nota pendente existente
+    (sqlite3.Row) ou None."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM notas WHERE nf_numero=? AND cliente=?", (nf_numero, cliente))
+    cur.execute("SELECT * FROM notas WHERE nf_numero=? AND cliente=? AND resolvido=0", (nf_numero, cliente))
     row = cur.fetchone()
     conn.close()
     return row
 
 
-def inserir_nota(nf_numero, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data=None):
+def inserir_nota(nf_numero, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data=None,
+                  observacao=None):
     conn = get_connection()
     cur = conn.cursor()
     try:
         cur.execute("""
             INSERT INTO notas (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-                                criado_em, resolvido, agendamento_data)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                                criado_em, resolvido, agendamento_data, observacao)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
         """, (nf_numero, cliente, ocorrencia, sigla, data_ocorrencia,
-              datetime.now().isoformat(), agendamento_data))
+              datetime.now().isoformat(), agendamento_data, observacao))
     except sqlite3.IntegrityError:
         conn.rollback()
         conn.close()
@@ -293,6 +312,17 @@ def listar_notas_ativas():
     return rows
 
 
+def listar_ids_notas_ativas_por_nf(nf_numero):
+    """Ids de todas as notas pendentes com esse numero de NF (podem ser de
+    remetentes diferentes)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM notas WHERE resolvido=0 AND nf_numero=? ORDER BY criado_em ASC", (nf_numero,))
+    ids = [r["id"] for r in cur.fetchall()]
+    conn.close()
+    return ids
+
+
 def obter_nota(nota_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -304,14 +334,38 @@ def obter_nota(nota_id):
 
 def atualizar_campo_nota(nota_id, campo, valor):
     campos_validos = {"nf_numero", "cliente", "ocorrencia", "sigla", "data_ocorrencia",
-                       "agendamento_data", "resolvido"}
+                       "agendamento_data", "resolvido", "observacao"}
     if campo not in campos_validos:
         raise ValueError("Campo invalido: %s" % campo)
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("UPDATE notas SET %s=? WHERE id=?" % campo, (valor, nota_id))
-    conn.commit()
+    try:
+        cur.execute("UPDATE notas SET %s=? WHERE id=?" % campo, (valor, nota_id))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Editar NF/remetente (ou reabrir) criaria duas notas pendentes iguais.
+        conn.rollback()
+        conn.close()
+        raise NotaDuplicadaError(MENSAGEM_NF_DUPLICADA)
     conn.close()
+
+
+def atualizar_ocorrencia(nota_id, ocorrencia, agendamento_data=None):
+    """Atualiza ocorrencia e data de agendamento de forma atomica (um unico
+    UPDATE). agendamento_data=None limpa a data (ocorrencia que nao e
+    agendamento). Demais campos nao sao tocados. Retorna True se a nota existe."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE notas SET ocorrencia=?, agendamento_data=? WHERE id=?",
+                    (ocorrencia, agendamento_data, nota_id))
+        conn.commit()
+        return cur.rowcount > 0
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def remover_nota(nota_id):
