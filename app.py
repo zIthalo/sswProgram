@@ -5,24 +5,14 @@ Aplicacao principal em Tkinter (biblioteca padrao do Python - compativel com
 Windows 7 ou superior, e portavel para Linux sem alteracoes).
 """
 
-import os
-import sqlite3
-import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, filedialog
+from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 
-import atualizacoes
-import aparencia
-import backup
-import comprovante
 import database as db
 import dateutils
-import exportacoes
 import occorrencias as occ
-import versao
-from dialogs import (GerenciarLista, JanelaAparencia, editar_campo_texto, fluxo_marcar_resolvido,
-                     pedir_opcao, pedir_texto_atualizacao)
+from dialogs import GerenciarLista, editar_campo_texto, fluxo_marcar_resolvido
 
 
 def dias_em_tratativas(criado_em_iso):
@@ -41,34 +31,21 @@ def hora_insercao(criado_em_iso):
 
 
 def montar_segmentos_cabecalho(nota):
-    """Monta o cabecalho da nota como uma lista de (texto, negrito). Quais
-    campos aparecem em negrito vem das preferencias de aparencia do usuario
-    (padrao de fabrica: CLIENTE, OCORRENCIA e AGENDAMENTO). O TEXTO e sempre
-    o mesmo, independentemente da aparencia."""
-    neg = aparencia.eh_negrito
+    """Monta o cabecalho da nota como uma lista de (texto, negrito) — usada
+    para exibir CLIENTE, OCORRÊNCIA e AGENDAMENTO em negrito no bloco da nota."""
     dias = dias_em_tratativas(nota["criado_em"])
     segmentos = [
-        ("NF: %s" % nota["nf_numero"], neg("nf")),
+        ("NF: %s / " % nota["nf_numero"], False),
+        ("CLIENTE: %s" % nota["cliente"], True),
         (" / ", False),
-        ("CLIENTE: %s" % nota["cliente"], neg("cliente")),
-        (" / ", False),
-        ("OCORRÊNCIA: %s" % nota["ocorrencia"], neg("ocorrencia")),
-        (" / ", False),
-        ("SIGLA UNIDADE: %s" % nota["sigla"], neg("sigla")),
-        (" / ", False),
-        ("DATA: %s HORA: %s" % (dateutils.formatar_data_exibicao(nota["data_ocorrencia"]),
-                                hora_insercao(nota["criado_em"])), neg("data_hora")),
-        (" / ", False),
-        ("DIAS EM TRATATIVAS: %s" % dias, neg("dias")),
+        ("OCORRÊNCIA: %s" % nota["ocorrencia"], True),
+        (" / SIGLA UNIDADE: %s / DATA: %s HORA: %s / DIAS EM TRATATIVAS: %s" % (
+            nota["sigla"], dateutils.formatar_data_exibicao(nota["data_ocorrencia"]),
+            hora_insercao(nota["criado_em"]), dias), False),
     ]
     if nota["agendamento_data"]:
         segmentos.append((" / ", False))
-        segmentos.append(("AGENDAMENTO: %s" % dateutils.formatar_data_exibicao(nota["agendamento_data"]),
-                          neg("agendamento")))
-    observacao = nota["observacao"] if "observacao" in nota.keys() else None
-    if observacao:
-        segmentos.append((" / ", False))
-        segmentos.append(("OBS: %s" % observacao, neg("observacao")))
+        segmentos.append(("AGENDAMENTO: %s" % dateutils.formatar_data_exibicao(nota["agendamento_data"]), True))
     return segmentos
 
 
@@ -82,7 +59,7 @@ class NotaBlock(ttk.Frame):
     """Widget que representa o bloco visual de uma nota fiscal na tela principal."""
 
     def __init__(self, master, app, nota_row, tratativas=None):
-        super().__init__(master, padding=8, relief="groove", borderwidth=1, style=aparencia.estilo_frame())
+        super().__init__(master, padding=8, relief="groove", borderwidth=1)
         self.app = app
         self.nota_id = nota_row["id"]
         self.nota_row = nota_row
@@ -91,7 +68,6 @@ class NotaBlock(ttk.Frame):
         self.txt_cabecalho = tk.Text(
             self, wrap="word", height=1, borderwidth=0, highlightthickness=0,
             font=("Consolas", 9), cursor="hand2", padx=0, pady=0, exportselection=False,
-            **aparencia.kwargs_texto()
         )
         self.txt_cabecalho.tag_configure("negrito", font=("Consolas", 9, "bold"))
         self.txt_cabecalho.pack(fill="x")
@@ -109,21 +85,29 @@ class NotaBlock(ttk.Frame):
                 widget.destroy()
         self._labels_texto = []
 
+        nota = self.nota_row
         largura_atual = self.app.obter_largura_lista()
 
-        self._atualizar_cabecalho()
+        self.txt_cabecalho.configure(state="normal")
+        self.txt_cabecalho.delete("1.0", tk.END)
+        for texto, negrito in montar_segmentos_cabecalho(nota):
+            self.txt_cabecalho.insert(tk.END, texto, ("negrito",) if negrito else ())
+        self.txt_cabecalho.configure(state="disabled", insertwidth=0)
+        self.txt_cabecalho.bind("<Button-1>", self._copiar_nf)
+        self.txt_cabecalho.bind("<Button-3>", self._abrir_menu)
+        self.txt_cabecalho.bind("<Double-Button-1>", self._adicionar_tratativa)
+        self._ajustar_altura_cabecalho()
 
-        separador = tk.Label(self, text="=" * 90, anchor="w", font=("Consolas", 7), **aparencia.kwargs_texto())
+        separador = tk.Label(self, text="=" * 90, anchor="w", font=("Consolas", 7))
         separador.pack(fill="x")
         separador.bind("<Button-1>", self._selecionar)
 
-        self.frame_tratativas = ttk.Frame(self, style=aparencia.estilo_frame())
+        self.frame_tratativas = ttk.Frame(self)
         self.frame_tratativas.pack(fill="x")
         self.frame_tratativas.bind("<Button-1>", self._selecionar)
         for t in self._tratativas:
             linha = tk.Label(self.frame_tratativas, text="%s: %s" % (t["timestamp"], t["texto"]),
-                              anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual,
-                              **aparencia.kwargs_texto())
+                              anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual)
             linha.pack(fill="x")
             linha.bind("<Button-1>", self._selecionar)
             linha.bind("<Double-Button-1>", self._adicionar_tratativa)
@@ -136,25 +120,6 @@ class NotaBlock(ttk.Frame):
 
         self._atualizar_destaque_selecao()
 
-    def _atualizar_cabecalho(self):
-        """Reescreve somente o texto do cabeçalho (NF/CLIENTE/OCORRÊNCIA/
-        SIGLA/AGENDAMENTO) a partir de self.nota_row. Usada tanto na
-        montagem inicial do bloco (_montar) quanto na atualização pontual
-        de um campo editado (atualizar) — nesse segundo caso, isolar essa
-        etapa evita destruir e recriar o separador e as linhas de
-        tratativa, que não mudam quando só um campo do cabeçalho é
-        editado."""
-        nota = self.nota_row
-        self.txt_cabecalho.configure(state="normal")
-        self.txt_cabecalho.delete("1.0", tk.END)
-        for texto, negrito in montar_segmentos_cabecalho(nota):
-            self.txt_cabecalho.insert(tk.END, texto, ("negrito",) if negrito else ())
-        self.txt_cabecalho.configure(state="disabled", insertwidth=0)
-        self.txt_cabecalho.bind("<Button-1>", self._copiar_nf)
-        self.txt_cabecalho.bind("<Button-3>", self._abrir_menu)
-        self.txt_cabecalho.bind("<Double-Button-1>", self._adicionar_tratativa)
-        self._ajustar_altura_cabecalho()
-
     def _ajustar_altura_cabecalho(self):
         try:
             linhas = self.txt_cabecalho.count("1.0", "end", "displaylines")
@@ -166,11 +131,10 @@ class NotaBlock(ttk.Frame):
             self.txt_cabecalho.configure(height=n)
 
     def _atualizar_destaque_selecao(self):
-        cfg = aparencia.obter()
         if self.app.nota_selecionada_id == self.nota_id:
-            self.txt_cabecalho.configure(background=cfg["cor_selecao"])
+            self.txt_cabecalho.configure(background="#cfe8ff")
         else:
-            self.txt_cabecalho.configure(background=cfg["cor_fundo"] or self.app.cget("bg"))
+            self.txt_cabecalho.configure(background=self.app.cget("bg"))
 
     def atualizar_largura(self, largura):
         for lbl in getattr(self, "_labels_texto", []):
@@ -181,13 +145,8 @@ class NotaBlock(ttk.Frame):
         self.app.selecionar_nota(self.nota_id, rolar=False)
 
     def atualizar(self, nota_row):
-        """Atualiza este bloco com os novos dados da nota após a edição de
-        um campo (ocorrência, sigla, NF, cliente, etc.). Só o cabeçalho é
-        reescrito — o separador e as linhas de tratativa já existentes
-        mantêm seus widgets e estado intactos, já que nenhum desses dados
-        muda numa edição de campo."""
         self.nota_row = nota_row
-        self._atualizar_cabecalho()
+        self._montar()
 
     def _copiar_nf(self, event=None):
         self._selecionar()
@@ -198,10 +157,10 @@ class NotaBlock(ttk.Frame):
         return "break"
 
     def _adicionar_tratativa(self, event=None):
-        texto = pedir_texto_atualizacao(
-            self.app,
+        texto = simpledialog.askstring(
             "Nova atualização",
             "Descreva a atualização da tratativa para a NF %s:" % self.nota_row["nf_numero"],
+            parent=self.app,
         )
         if texto:
             texto = texto.strip().upper()
@@ -214,8 +173,7 @@ class NotaBlock(ttk.Frame):
         a lista inteira — mantém a inserção rápida mesmo com muitas notas."""
         largura_atual = self.app.obter_largura_lista()
         linha = tk.Label(self.frame_tratativas, text="%s: %s" % (timestamp, texto),
-                          anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual,
-                              **aparencia.kwargs_texto())
+                          anchor="w", justify="left", font=("Consolas", 9), wraplength=largura_atual)
         linha.pack(fill="x")
         linha.bind("<Button-1>", self._selecionar)
         linha.bind("<Double-Button-1>", self._adicionar_tratativa)
@@ -235,23 +193,11 @@ class NotaBlock(ttk.Frame):
                           command=lambda: self.app.editar_campo(self.nota_id, "cliente", "Remetente"))
         menu.add_command(label="Editar ocorrência",
                           command=lambda: self.app.editar_ocorrencia(self.nota_id))
-        if occ.eh_ocorrencia_agendamento(self.nota_row["ocorrencia"]):
-            menu.add_command(label="Alterar data do agendamento",
-                              command=lambda: self.app.editar_data_agendamento(self.nota_id))
         menu.add_command(label="Editar sigla",
                           command=lambda: self.app.editar_campo(self.nota_id, "sigla", "Sigla/Empresa"))
-        menu.add_command(label="Editar observação/tag",
-                          command=lambda: self.app.editar_observacao(self.nota_id))
-        menu.add_separator()
-        menu.add_command(label="Nova nota para o mesmo remetente/sigla",
-                          command=lambda: self.app.duplicar_nota(self.nota_id))
         menu.add_separator()
         menu.add_command(label="Copiar informações da nota",
                           command=lambda: self.app.copiar_informacoes_nota(self.nota_id))
-        menu.add_command(label="Copiar informações da nota (sem atualizações)",
-                          command=lambda: self.app.copiar_informacoes_nota_sem_tratativas(self.nota_id))
-        menu.add_command(label="Gerar comprovante (imprimir / PDF)",
-                          command=lambda: self.app.gerar_comprovante_nota(self.nota_id))
         menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
@@ -265,10 +211,7 @@ class App(tk.Tk):
 
         db.init_db()
         db.limpar_historico_expirado(60)
-        aparencia.carregar()
-        self._aplicar_estilos_aparencia()
 
-        self._canvas_rolagem = {}  # janela secundaria -> canvas rolavel dela (ver _registrar_rolagem)
         self.blocos = {}  # nota_id -> NotaBlock
         self.nota_selecionada_id = None
         self.filtro_busca_texto = ""  # filtro ativo de busca por cliente/sigla (minusculo, ou vazio)
@@ -288,15 +231,6 @@ class App(tk.Tk):
         self._configurar_atalhos_edicao()
         self.bind_all("<Control-f>", self._focar_busca)
 
-        # Verificacao de atualizacao em segundo plano: nao deve atrasar a
-        # abertura do sistema nem travar a interface, por isso roda numa
-        # thread separada e so volta a mexer na tela (via self.after) se
-        # encontrar uma versao nova.
-        self.after(1500, self._verificar_atualizacoes_automatico)
-
-        # Fechar a janela (X ou menu Sair) gera um backup datado do banco.
-        self.protocol("WM_DELETE_WINDOW", self._ao_fechar)
-
     # ------------------------------------------------------------------
     # Menu superior
     # ------------------------------------------------------------------
@@ -304,12 +238,7 @@ class App(tk.Tk):
         barra = tk.Menu(self)
 
         m_arquivo = tk.Menu(barra, tearoff=0)
-        m_arquivo.add_command(label="Criar backup agora", command=self._criar_backup_manual)
-        m_arquivo.add_command(label="Exportar tudo (salvaguarda)...", command=self._exportar_tudo)
-        m_arquivo.add_separator()
-        m_arquivo.add_command(label="Verificar atualizações...", command=self._verificar_atualizacoes_manual)
-        m_arquivo.add_separator()
-        m_arquivo.add_command(label="Sair", command=self._ao_fechar)
+        m_arquivo.add_command(label="Sair", command=self.destroy)
         barra.add_cascade(label="Arquivo", menu=m_arquivo)
 
         m_cadastros = tk.Menu(barra, tearoff=0)
@@ -321,182 +250,10 @@ class App(tk.Tk):
                                  command=self._gerenciar_clientes)
         barra.add_cascade(label="Cadastros", menu=m_cadastros)
 
-        barra.add_command(label="Aparência", command=self._abrir_aparencia)
         barra.add_command(label="Relatório", command=self._abrir_relatorio)
         barra.add_command(label="Histórico", command=self._abrir_historico)
 
         self.config(menu=barra)
-
-    # ------------------------------------------------------------------
-    # Aparência (cores e negrito)
-    # ------------------------------------------------------------------
-    def _aplicar_estilos_aparencia(self):
-        """Define o estilo ttk usado pelos frames dos blocos de nota com a
-        cor de fundo escolhida (so usado quando o usuario personalizou)."""
-        fundo = aparencia.obter()["cor_fundo"]
-        if fundo:
-            ttk.Style(self).configure("Nota.TFrame", background=fundo)
-
-    def _abrir_aparencia(self):
-        janela = JanelaAparencia(self, aparencia.obter())
-        if janela.acao == "salvar":
-            if not aparencia.salvar(janela.config_resultado):
-                messagebox.showwarning(
-                    "Aparência", "Não foi possível gravar o arquivo de preferências; "
-                    "as mudanças valem só até fechar o sistema.", parent=self)
-        elif janela.acao == "restaurar":
-            aparencia.restaurar_padrao()
-        else:
-            return
-        self._aplicar_estilos_aparencia()
-        self.recarregar_lista()
-
-    # ------------------------------------------------------------------
-    # Backup e exportação
-    # ------------------------------------------------------------------
-    def _ao_fechar(self):
-        """Cria um backup automático datado do banco antes de fechar. Falha
-        no backup nunca impede o fechamento (criar_backup trata os erros)."""
-        try:
-            backup.criar_backup("automatico")
-        finally:
-            self.destroy()
-
-    def _criar_backup_manual(self):
-        caminho = backup.criar_backup("manual")
-        if caminho:
-            messagebox.showinfo(
-                "Backup criado",
-                "Backup salvo em:\n%s" % caminho, parent=self)
-        else:
-            messagebox.showerror(
-                "Backup", "Não foi possível criar o backup.", parent=self)
-
-    def _exportar_tudo(self):
-        pasta = filedialog.askdirectory(
-            parent=self, title="Escolha a pasta onde salvar a exportação completa")
-        if not pasta:
-            return
-        try:
-            destino = exportacoes.exportar_tudo(pasta)
-        except (OSError, Exception) as erro:
-            messagebox.showerror("Exportar tudo", "Falha ao exportar: %s" % erro, parent=self)
-            return
-        messagebox.showinfo(
-            "Exportação concluída",
-            "Cópia do banco de dados + notas.csv, tratativas.csv e historico.csv "
-            "salvos em:\n%s" % destino, parent=self)
-
-    def _exportar_csv(self, titulo, nome_sugerido, funcao_exportar, parent):
-        caminho = filedialog.asksaveasfilename(
-            parent=parent, title=titulo, defaultextension=".csv", initialfile=nome_sugerido,
-            filetypes=[("Planilha CSV (Excel)", "*.csv")])
-        if not caminho:
-            return
-        try:
-            funcao_exportar(caminho)
-        except OSError as erro:
-            messagebox.showerror(
-                "Exportar", "Falha ao salvar o arquivo (ele está aberto no Excel?):\n%s" % erro,
-                parent=parent)
-            return
-        messagebox.showinfo("Exportar", "Arquivo salvo em:\n%s" % caminho, parent=parent)
-
-    # ------------------------------------------------------------------
-    # Verificação de atualizações (GitHub Releases)
-    # ------------------------------------------------------------------
-    def _verificar_atualizacoes_automatico(self):
-        """Checagem silenciosa feita ao abrir o sistema: roda numa thread
-        separada (para não travar a tela) e só interrompe o usuário se
-        encontrar uma versão mais nova. Qualquer falha (sem internet, etc.)
-        é ignorada sem aviso nenhum."""
-        def tarefa():
-            info = atualizacoes.verificar_nova_versao()
-            if info:
-                self.after(0, lambda: self._perguntar_se_atualiza(info, manual=False))
-        threading.Thread(target=tarefa, daemon=True).start()
-
-    def _verificar_atualizacoes_manual(self):
-        """Checagem disparada pelo menu Arquivo > Verificar atualizações:
-        mostra o resultado mesmo quando não há nada novo."""
-        def tarefa():
-            info = atualizacoes.verificar_nova_versao()
-            self.after(0, lambda: self._mostrar_resultado_verificacao_manual(info))
-        threading.Thread(target=tarefa, daemon=True).start()
-
-    def _mostrar_resultado_verificacao_manual(self, info):
-        if info:
-            self._perguntar_se_atualiza(info, manual=True)
-        else:
-            messagebox.showinfo(
-                "Verificar atualizações",
-                "Você já está usando a versão mais recente (%s)." % versao.VERSAO,
-                parent=self,
-            )
-
-    def _perguntar_se_atualiza(self, info, manual):
-        notas = ("\n\n%s" % info["notas"]) if info["notas"] else ""
-        confirmar = messagebox.askyesno(
-            "Nova versão disponível",
-            "Uma nova versão (%s) está disponível — você está usando a %s.%s\n\n"
-            "Deseja baixar e instalar agora? O sistema será fechado e reaberto "
-            "automaticamente ao final." % (info["versao"], versao.VERSAO, notas),
-            parent=self,
-        )
-        if confirmar:
-            self._baixar_e_aplicar_atualizacao(info)
-
-    def _baixar_e_aplicar_atualizacao(self, info):
-        janela = tk.Toplevel(self)
-        janela.title("Atualizando...")
-        janela.resizable(False, False)
-        janela.transient(self)
-        janela.protocol("WM_DELETE_WINDOW", lambda: None)  # não deixa fechar no meio do download
-        frame = ttk.Frame(janela, padding=16)
-        frame.pack(fill="both", expand=True)
-        rotulo = ttk.Label(frame, text="Baixando versão %s..." % info["versao"])
-        rotulo.pack(pady=(0, 8))
-        barra = ttk.Progressbar(frame, mode="determinate", length=280, maximum=100)
-        barra.pack()
-        janela.update_idletasks()
-        largura, altura = janela.winfo_reqwidth(), janela.winfo_reqheight()
-        janela.geometry("+%d+%d" % (
-            self.winfo_rootx() + (self.winfo_width() // 2) - (largura // 2),
-            self.winfo_rooty() + (self.winfo_height() // 2) - (altura // 2),
-        ))
-
-        def progresso(lido, total):
-            if total:
-                self.after(0, lambda: barra.configure(value=min(100, int(lido * 100 / total))))
-
-        def tarefa():
-            caminho = atualizacoes.baixar_novo_executavel(info, progresso_callback=progresso)
-            self.after(0, lambda: concluir(caminho))
-
-        def concluir(caminho):
-            janela.destroy()
-            if not caminho:
-                messagebox.showerror(
-                    "Falha ao atualizar",
-                    "Não foi possível baixar a nova versão. Verifique sua conexão com a "
-                    "internet e tente novamente pelo menu Arquivo > Verificar atualizações.",
-                    parent=self,
-                )
-                return
-            backup.criar_backup("antes_atualizacao")
-            if atualizacoes.aplicar_atualizacao(caminho):
-                self.destroy()
-            else:
-                messagebox.showwarning(
-                    "Atualização automática indisponível",
-                    "O download foi concluído, mas a troca automática do executável só "
-                    "funciona na versão instalada (.exe) com o atualizador.exe presente na "
-                    "mesma pasta. Baixe e instale a nova versão manualmente em:\n%s"
-                    % versao.URL_RELEASES,
-                    parent=self,
-                )
-
-        threading.Thread(target=tarefa, daemon=True).start()
 
     def _gerenciar_empresas_parceiras(self):
         GerenciarLista(self, "Empresas parceiras", db.listar_empresas_parceiras,
@@ -515,13 +272,7 @@ class App(tk.Tk):
 
     def _abrir_relatorio(self):
         db.limpar_historico_expirado(60)
-        try:
-            dados = db.gerar_relatorio()
-        except Exception:
-            dados = {
-                "siglas_mais_ocorrencias": [], "unidades_mais_morosas": [],
-                "clientes_mais_morosos": [], "tempo_medio_dias": 0, "tempo_medio_horas": 0,
-            }
+        dados = db.gerar_relatorio()
 
         janela = tk.Toplevel(self)
         janela.title("Relatório")
@@ -531,12 +282,7 @@ class App(tk.Tk):
 
         ttk.Label(frame, text="Notas pendentes de tratativa:",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        try:
-            total_pendentes = db.contar_notas_pendentes()
-            texto_total = "  Total: %d nota(s) pendente(s)" % total_pendentes
-        except Exception:
-            texto_total = "  Não foi possível calcular (verifique se o programa foi atualizado corretamente)."
-        ttk.Label(frame, text=texto_total).pack(anchor="w")
+        ttk.Label(frame, text="  Total: %d nota(s) pendente(s)" % db.contar_notas_pendentes()).pack(anchor="w")
 
         linha_sigla = ttk.Frame(frame)
         linha_sigla.pack(fill="x", pady=(4, 0))
@@ -551,11 +297,8 @@ class App(tk.Tk):
             if not texto:
                 lbl_resultado_sigla.configure(text="")
                 return
-            try:
-                total = db.contar_notas_pendentes_por_sigla(texto)
-                lbl_resultado_sigla.configure(text="%d nota(s) pendente(s)" % total)
-            except Exception:
-                lbl_resultado_sigla.configure(text="Não foi possível calcular.")
+            total = db.contar_notas_pendentes_por_sigla(texto)
+            lbl_resultado_sigla.configure(text="%d nota(s) pendente(s)" % total)
 
         var_sigla_pendente.trace_add("write", atualizar_contagem_sigla)
 
@@ -600,10 +343,6 @@ class App(tk.Tk):
             ttk.Label(frame, text="  (sem dados no histórico)").pack(anchor="w")
 
         ttk.Separator(frame).pack(fill="x", pady=10)
-        ttk.Button(frame, text="Exportar relatório (CSV/Excel)",
-                   command=lambda: self._exportar_csv(
-                       "Exportar relatório", "relatorio_sac.csv",
-                       exportacoes.exportar_relatorio_csv, janela)).pack(anchor="w", pady=(0, 6))
         ttk.Button(frame, text="Ver histórico completo (60 dias)",
                    command=self._abrir_historico).pack(anchor="w")
         ttk.Button(frame, text="Apagar histórico (60 dias)",
@@ -651,12 +390,7 @@ class App(tk.Tk):
 
         ttk.Button(linha_filtros, text="Limpar filtros",
                    command=lambda: (var_cliente.set(""), var_sigla.set(""), var_nf.set(""))
-                   ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
-        ttk.Button(linha_filtros, text="Exportar histórico (CSV/Excel)",
-                   command=lambda: self._exportar_csv(
-                       "Exportar histórico", "historico_sac.csv",
-                       exportacoes.exportar_historico_csv, janela)
-                   ).grid(row=1, column=3, columnspan=3, sticky="e", pady=(6, 0))
+                   ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         canvas = tk.Canvas(frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
@@ -666,7 +400,6 @@ class App(tk.Tk):
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        self._registrar_rolagem(janela, canvas)
 
         def atualizar(*_args):
             for widget in interior.winfo_children():
@@ -743,7 +476,6 @@ class App(tk.Tk):
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        self._registrar_rolagem(janela, canvas)
 
         if not registros:
             ttk.Label(interior, text="Nenhum registro encontrado.").pack(anchor="w")
@@ -970,19 +702,6 @@ class App(tk.Tk):
             messagebox.showerror("Erro", "Informe o cliente/remetente.")
             return
 
-        # Regra de unicidade: nao pode haver duas NFs PENDENTES de tratativa
-        # com o mesmo numero para o mesmo remetente. Uma nota ja resolvida
-        # nao bloqueia: o usuario pode cadastrar a NF de novo. Checada aqui
-        # ANTES de pedir ocorrencia/agendamento, para nao fazer o usuario
-        # preencher o resto do formulario so para descobrir depois.
-        existente = db.existe_nf_cliente(nf, cliente)
-        if existente:
-            messagebox.showerror("Nota Fiscal duplicada", db.MENSAGEM_NF_DUPLICADA)
-            self.var_filtro.set(self.OPCAO_TODAS)
-            self.recarregar_lista()
-            self._destacar_nota(existente["id"])
-            return
-
         ocorrencia_digitada = self.var_ocorrencia.get().strip().upper()
         if not ocorrencia_digitada:
             messagebox.showerror("Erro", "Informe a ocorrência.")
@@ -1007,22 +726,30 @@ class App(tk.Tk):
 
         data_ocorrencia = dateutils.parse_data_usuario("0")
 
+        duplicada = db.buscar_duplicada(nf, cliente, ocorrencia)
+        if duplicada:
+            messagebox.showinfo("Duplicidade", "Esta NF e remetente já foram inseridos no sistema.")
+            self.recarregar_lista()
+            self._destacar_nota(duplicada["id"])
+            return
+
         agendamento_data = None
         if occ.eh_ocorrencia_agendamento(ocorrencia):
-            agendamento_data = self._pedir_data_agendamento()
-            if agendamento_data is None:
+            data_ag = simpledialog.askstring(
+                "Data do agendamento",
+                "Informe a data do agendamento (0=hoje, dia do mês, ou ddmmaaaa):", parent=self)
+            if data_ag is None:
+                return
+            try:
+                agendamento_data = dateutils.parse_data_usuario(data_ag)
+            except ValueError as e:
+                messagebox.showerror("Data inválida", str(e))
+                return
+            if dateutils.data_e_passado_ou_hoje(agendamento_data):
+                messagebox.showerror("Erro", "A data do agendamento é igual ou inferior a data atual.")
                 return
 
-        try:
-            novo_id = db.inserir_nota(nf, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data)
-        except db.NotaDuplicadaError:
-            # Defesa contra concorrencia: a checagem existe_nf_cliente() acima
-            # ja cobre o caso comum, mas se outra insercao da MESMA NF+remetente
-            # tiver commitado entre essa checagem e este INSERT, o indice
-            # UNIQUE do banco pega o caso e cai aqui.
-            messagebox.showerror("Nota Fiscal duplicada", db.MENSAGEM_NF_DUPLICADA)
-            self.recarregar_lista()
-            return
+        novo_id = db.inserir_nota(nf, cliente, ocorrencia, sigla, data_ocorrencia, agendamento_data)
 
         if cliente.lower() not in [c.lower() for c in db.listar_clientes()]:
             db.adicionar_cliente(cliente)
@@ -1146,18 +873,6 @@ class App(tk.Tk):
         if texto.isdigit():
             # 1) Busca por NF: localiza e destaca a nota especifica (nao filtra a lista)
             nf = int(texto)
-
-            # Mais de uma nota pendente com esse numero (remetentes
-            # diferentes): filtra a lista mostrando TODAS elas, ignorando o
-            # filtro de ocorrencia para nenhuma ficar escondida.
-            ids_mesmo_numero = db.listar_ids_notas_ativas_por_nf(nf)
-            if len(ids_mesmo_numero) > 1:
-                self.var_filtro.set(self.OPCAO_TODAS)
-                self.filtro_busca_texto = ""
-                self.filtro_busca_ids = set(ids_mesmo_numero)
-                self.recarregar_lista(resetar_scroll=True)
-                return
-
             alvo = None
             for nota_id, bloco in self.blocos.items():
                 if bloco.nota_row["nf_numero"] == nf:
@@ -1208,30 +923,13 @@ class App(tk.Tk):
             return
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(bloco.winfo_y() / max(self.frame_lista.winfo_height(), 1))
-        # Rolagem pontual (navegacao por teclado, Ctrl+F): forca a repintura
-        # imediatamente, ja que e uma unica chamada, nao um fluxo continuo
-        # de eventos como arrastar a barra ou girar a roda do mouse — ver
-        # _agendar_repintura_pos_rolagem para a explicacao do porque isso e
-        # necessario.
-        self.canvas.update()
 
-    def atualizar_scrollregion(self, forcar_repintura=True):
+    def atualizar_scrollregion(self):
         """Resincroniza a área rolável do canvas com o conteúdo atual, sem
         reconstruir a lista inteira (usado após inserções pontuais, como uma
-        nova tratativa ou uma nova nota, para manter a inserção rápida).
-
-        forcar_repintura=True chama canvas.update() (repintura completa e
-        imediata): necessário quando widgets ACABARAM DE SER CRIADOS, senão
-        o bloco novo reserva o espaço certo mas fica com o conteúdo
-        (tratativas) sem desenhar até o usuário redimensionar a janela.
-        Widgets que já existem na tela (edição de campo, redimensionamento)
-        não precisam dessa repintura forçada: passam forcar_repintura=False
-        para evitar esse custo extra em uma operação que deveria ser rápida.
-        """
+        nova tratativa ou uma nova nota, para manter a inserção rápida)."""
         self.frame_lista.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        if forcar_repintura:
-            self.canvas.update()
 
     def selecionar_nota(self, nota_id, rolar=True):
         anterior = self.blocos.get(self.nota_selecionada_id)
@@ -1283,11 +981,7 @@ class App(tk.Tk):
         self.combo_filtro.bind("<Return>", self._aplicar_filtro_digitado)
         self.combo_filtro.bind("<<ComboboxSelected>>", lambda e: self.recarregar_lista(resetar_scroll=True))
         self.btn_limpar_filtro = ttk.Button(frame, text="Limpar filtro", command=self._limpar_filtro)
-        self.btn_limpar_filtro.grid(row=0, column=2, sticky="e", padx=(6, 0))
-
-        self.btn_copiar_filtradas = ttk.Button(
-            frame, text="Copiar notas filtradas", command=self.copiar_notas_filtradas)
-        self.btn_copiar_filtradas.grid(row=0, column=3, sticky="e", padx=(6, 0))
+        self.btn_limpar_filtro.grid(row=0, column=2, sticky="e")
 
         self._atualizar_combobox_filtro()
 
@@ -1339,7 +1033,7 @@ class App(tk.Tk):
         container.pack(fill="both", expand=True, padx=10, pady=(4, 10))
 
         self.canvas = tk.Canvas(container, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self._ao_rolar_lista)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
         self.frame_lista = ttk.Frame(self.canvas)
 
         self.frame_lista.bind(
@@ -1351,11 +1045,9 @@ class App(tk.Tk):
         scrollbar.pack(side="right", fill="y")
 
         self._largura_lista_atual = 760
-        self._redimensionar_job = None
         self.canvas.bind("<Configure>", self._ao_redimensionar_lista)
 
-        self._rolagem_job = None
-        self.canvas.bind_all("<MouseWheel>", self._ao_rolar_roda_mouse)
+        self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-e.delta / 120), "units"))
 
         self.canvas.bind("<Up>", lambda e: self._mover_selecao(-1))
         self.canvas.bind("<Down>", lambda e: self._mover_selecao(1))
@@ -1365,175 +1057,16 @@ class App(tk.Tk):
     def _ao_redimensionar_lista(self, event):
         """Mantem o conteudo da lista de notas ajustado a largura da janela,
         para que o texto dos blocos quebre a linha corretamente em vez de
-        ficar cortado quando a janela e estreitada.
-
-        O Tkinter dispara <Configure> repetidamente durante o arraste do
-        mouse (varias vezes por segundo), inclusive quando so a ALTURA da
-        janela mudou (ex.: arrastar so a borda inferior). Dois cuidados
-        evitam trabalho desnecessario: (1) eventos que nao mudam a largura
-        util sao descartados na hora, sem nenhum reflow; (2) quando a
-        largura muda de verdade, o reflow de cada bloco (que recalcula
-        quebra de linha e altura) so roda uma vez, apos o usuario parar de
-        arrastar, em vez de a cada evento intermediario.
-
-        Usa canvas.winfo_width() (a largura real e atual do widget) em vez
-        de event.width: num redimensionamento composto de mover+redimensionar
-        a janela de uma vez (Windows+seta para encaixar na metade da tela),
-        o valor de event.width de um <Configure> isolado pode nao refletir
-        ainda a largura final do canvas, o que deixava o conteudo da lista
-        com a largura/posicao internas dessincronizadas da largura real da
-        tela (texto cortado/deslocado). Tambem garante que a area rolavel
-        nunca fique deslocada horizontalmente (este canvas so tem rolagem
-        vertical; sem isso, um deslocamento horizontal indevido nao tinha
-        como ser corrigido pelo usuario, pois nao existe barra horizontal)."""
-        largura_canvas = self.canvas.winfo_width()
-        self.canvas.itemconfig(self._frame_lista_janela, width=largura_canvas)
-        self.canvas.xview_moveto(0.0)
-        largura_nova = max(largura_canvas - 24, 200)
-        if largura_nova == self._largura_lista_atual:
-            return  # so a altura da janela mudou; nada para reajustar
-        self._largura_lista_atual = largura_nova
-        if self._redimensionar_job is not None:
-            self.after_cancel(self._redimensionar_job)
-        self._redimensionar_job = self.after(80, self._aplicar_redimensionamento_blocos)
-
-    def _aplicar_redimensionamento_blocos(self):
-        """Roda uma unica vez, 80ms depois do ultimo evento <Configure> (ou
-        seja, uma unica vez por redimensionamento, nao a cada evento). Por
-        isso pode pedir a repintura completa (forcar_repintura=True) sem
-        custo perceptivel: redimensionamentos abruptos — Win+seta para
-        encaixar a janela na metade da tela, ou soltar um arrasto rapido —
-        pulam de largura de uma vez só, e sem essa repintura forçada aqui o
-        Tkinter no Windows podia deixar a tela com conteúdo sobreposto/
-        desatualizado até alguma outra ação forçar um redesenho."""
-        self._redimensionar_job = None
-        largura = self._largura_lista_atual
+        ficar cortado quando a janela e estreitada."""
+        self.canvas.itemconfig(self._frame_lista_janela, width=event.width)
+        self._largura_lista_atual = max(event.width - 24, 200)
         for bloco in self.blocos.values():
-            bloco.atualizar_largura(largura)
-        self.atualizar_scrollregion(forcar_repintura=True)
-        self.canvas.xview_moveto(0.0)
+            bloco.atualizar_largura(self._largura_lista_atual)
 
     def obter_largura_lista(self):
         return getattr(self, "_largura_lista_atual", 760)
 
-    def _ao_rolar_lista(self, *args):
-        """Chamado pela barra de rolagem (arrastar o 'thumb' ou clicar nela).
-        Ver _agendar_repintura_pos_rolagem para o motivo de disparar uma
-        repintura apos a rolagem."""
-        self.canvas.yview(*args)
-        self._agendar_repintura_pos_rolagem()
-
-    def _registrar_rolagem(self, janela, canvas):
-        """Registra o canvas rolavel de uma janela secundaria (Historico,
-        detalhes do relatorio...), para a roda do mouse rolar SO ela quando
-        ela estiver em foco."""
-        self._canvas_rolagem[janela] = canvas
-        janela.bind("<Destroy>", lambda e, j=janela: self._canvas_rolagem.pop(j, None)
-                    if e.widget is j else None, add="+")
-
-    def _janela_da_rolagem(self, event):
-        """Janela (toplevel) que deve receber a rolagem: a que tem o foco do
-        teclado. Se nao der para saber o foco, usa a do widget do evento."""
-        try:
-            foco = self.focus_get()
-            if foco is not None:
-                return foco.winfo_toplevel()
-        except (KeyError, tk.TclError):
-            pass
-        try:
-            return event.widget.winfo_toplevel()
-        except (AttributeError, KeyError, tk.TclError):
-            return None
-
-    def _ao_rolar_roda_mouse(self, event):
-        """Roda do mouse: rola APENAS a janela em foco. Antes, o binding era
-        global (bind_all) e sempre rolava a lista principal, mesmo com o
-        Historico, Cadastros etc. em foco — rolando as ocorrencias junto.
-        Janelas sem area rolavel registrada (ex.: Cadastros, que tem a propria
-        Listbox) simplesmente nao movem a lista principal.
-        Ver _agendar_repintura_pos_rolagem para o motivo de disparar uma
-        repintura apos a rolagem da lista principal."""
-        janela = self._janela_da_rolagem(event)
-        passos = int(-event.delta / 120)
-        if janela is self:
-            self.canvas.yview_scroll(passos, "units")
-            self._agendar_repintura_pos_rolagem()
-            return
-        canvas = self._canvas_rolagem.get(janela)
-        if canvas is not None:
-            try:
-                canvas.yview_scroll(passos, "units")
-            except tk.TclError:
-                self._canvas_rolagem.pop(janela, None)
-
-    def _agendar_repintura_pos_rolagem(self):
-        """Garante que o conteudo recem-exposto pela rolagem seja realmente
-        desenhado na tela.
-
-        Blocos criados fora da area visivel (ex.: logo apos recarregar_lista
-        trocar o filtro, com a lista tendo muito mais notas do que cabe na
-        tela) ficam, no Windows, com o cabecalho e o separador sem pintar
-        ate alguma acao forcar um redesenho completo — o mesmo tipo de bug
-        ja visto antes com blocos recem-inseridos (ver item 14 do README),
-        so que agora exposto pela ROLAGEM em vez da insercao. Rolar sozinho
-        (canvas.yview/yview_scroll) so reposiciona a janela de visualizacao;
-        nao hA garantia de repintura completa do conteudo recem-exposto.
-
-        Por isso, uma unica vez, apos o usuario parar de rolar (debounce de
-        80ms, igual ao usado no redimensionamento), forcamos uma repintura
-        completa (canvas.update()). Fazer isso a cada evento de rolagem
-        seria caro com muitas notas ativas; feito uma unica vez ao final,
-        o custo e desprezivel."""
-        if self._rolagem_job is not None:
-            self.after_cancel(self._rolagem_job)
-        self._rolagem_job = self.after(80, self._repintar_apos_rolagem)
-
-    def _repintar_apos_rolagem(self):
-        self._rolagem_job = None
-        self.canvas.update()
-
     def recarregar_lista(self, resetar_scroll=False):
-        """Reconstroi a lista inteira a partir do banco (usado ao trocar de
-        filtro, entre outros casos).
-
-        Esta funcao termina chamando atualizar_scrollregion(), que no
-        caminho forcar_repintura=True executa canvas.update() — e
-        update() (diferente de update_idletasks()) processa TODA a fila de
-        eventos pendente do Tcl, nao so geometria. Se o usuario trocar o
-        filtro de novo rapido o suficiente para um segundo evento de troca
-        de filtro ja estar enfileirado nesse momento, esse canvas.update()
-        reentraria direto em recarregar_lista() ANTES desta chamada
-        terminar, destruindo/recriando os blocos no meio do processo —
-        exatamente o que produzia blocos duplicados/com cabecalho ausente
-        na tela ate o usuario clicar em "Limpar filtro" (que, por coincidencia,
-        e so mais uma chamada a recarregar_lista(), e funcionava por rodar
-        depois que a fila de eventos jah tinha se esvaziado).
-
-        A guarda abaixo torna essas chamadas sequenciais em vez de
-        aninhadas: uma chamada que chega enquanto outra ja esta em
-        andamento so marca que e preciso recarregar de novo ao final, em
-        vez de destruir/recriar os blocos no meio da execucao atual. Isso
-        garante que o estado final sempre reflita o ultimo filtro
-        selecionado, sem nunca deixar dois conjuntos de blocos coexistindo
-        na tela."""
-        if getattr(self, "_recarregando_lista", False):
-            self._recarregar_lista_pendente = True
-            self._recarregar_lista_pendente_resetar_scroll = (
-                resetar_scroll or getattr(self, "_recarregar_lista_pendente_resetar_scroll", False)
-            )
-            return
-        self._recarregando_lista = True
-        try:
-            self._recarregar_lista_impl(resetar_scroll)
-        finally:
-            self._recarregando_lista = False
-            if getattr(self, "_recarregar_lista_pendente", False):
-                self._recarregar_lista_pendente = False
-                resetar_pendente = self._recarregar_lista_pendente_resetar_scroll
-                self._recarregar_lista_pendente_resetar_scroll = False
-                self.recarregar_lista(resetar_scroll=resetar_pendente)
-
-    def _recarregar_lista_impl(self, resetar_scroll=False):
         for widget in self.frame_lista.winfo_children():
             widget.destroy()
         self.blocos = {}
@@ -1615,38 +1148,6 @@ class App(tk.Tk):
         self.update()
         self.mostrar_mensagem_flutuante("Informações copiadas!")
 
-    def copiar_informacoes_nota_sem_tratativas(self, nota_id):
-        """Copia só o cabeçalho da nota (NF/CLIENTE/OCORRÊNCIA/SIGLA/DATA/...),
-        sem o histórico de tratativas abaixo — útil para cobrança rápida,
-        sem o texto ficar poluído com todas as atualizações já registradas."""
-        nota = db.obter_nota(nota_id)
-        if nota is None:
-            return
-        self.clipboard_clear()
-        self.clipboard_append(formatar_cabecalho_nota(nota))
-        self.update()
-        self.mostrar_mensagem_flutuante("Informações copiadas (sem atualizações)!")
-
-    def copiar_notas_filtradas(self):
-        """Copia o cabeçalho (sem tratativas) de TODAS as notas atualmente
-        visíveis na tela — ou seja, já considerando o filtro de ocorrência e
-        a busca por cliente/sigla/NF em uso no momento. Pensado para a
-        cobrança diária de uma unidade/sigla/empresa inteira de uma vez,
-        em vez de copiar nota por nota."""
-        notas_visiveis = [bloco.nota_row for bloco in self.blocos.values()]
-        if not notas_visiveis:
-            messagebox.showinfo(
-                "Copiar notas filtradas",
-                "Não há notas para copiar com o filtro/busca atual.",
-                parent=self,
-            )
-            return
-        texto = "\n\n".join(formatar_cabecalho_nota(nota) for nota in notas_visiveis)
-        self.clipboard_clear()
-        self.clipboard_append(texto)
-        self.update()
-        self.mostrar_mensagem_flutuante("%d nota(s) copiada(s)!" % len(notas_visiveis))
-
     # ------------------------------------------------------------------
     # Acoes do menu de contexto de cada nota
     # ------------------------------------------------------------------
@@ -1673,74 +1174,16 @@ class App(tk.Tk):
             if self.nota_selecionada_id == nota_id:
                 self.nota_selecionada_id = None
             bloco.destroy()
-            self.atualizar_scrollregion(forcar_repintura=False)
+            self.atualizar_scrollregion()
         if hasattr(self, "combo_filtro"):
             self._atualizar_combobox_filtro()
-
-    def _atualizar_bloco_rapido(self, nota_id):
-        """Atualiza na tela somente o bloco da nota editada, sem reconstruir
-        a lista inteira — é essa reconstrução total (recarregar_lista) que
-        fazia uma edição pontual (ocorrência, sigla, etc.) demorar quando
-        havia muitas notas ativas, pois destruía e recriava todos os blocos
-        e reconsultava o banco inteiro por causa de uma única nota."""
-        filtro_atual = self.var_filtro.get() if hasattr(self, "var_filtro") else self.OPCAO_TODAS
-        if filtro_atual.strip().upper() == "AGENDAMENTO":
-            # Esse filtro reordena pela data do agendamento; precisa do
-            # caminho completo para recalcular a posição na lista.
-            self.recarregar_lista()
-            return
-        nota = db.obter_nota(nota_id)
-        bloco = self.blocos.get(nota_id)
-        if nota is None:
-            if bloco is not None:
-                self._remover_bloco_rapido(nota_id)
-            return
-        if bloco is not None:
-            bloco.atualizar(nota)
-            self.atualizar_scrollregion(forcar_repintura=False)
-        else:
-            self._adicionar_bloco_rapido(nota)
-        if hasattr(self, "combo_filtro"):
-            self._atualizar_combobox_filtro()
-
-    def _pedir_data_agendamento(self, data_atual=None):
-        """Pergunta e valida a data de agendamento (mesmas regras da criacao
-        da nota). Retorna a data (ddmmaaaa) ou None se cancelado/invalido.
-        data_atual: data ja gravada, mostrada e usada como valor inicial."""
-        msg = "Informe a data do agendamento (0=hoje, dia do mês, ou ddmmaaaa):"
-        if data_atual:
-            msg = "Data atual do agendamento: %s\n\n%s" % (
-                dateutils.formatar_data_exibicao(data_atual), msg)
-        data_ag = simpledialog.askstring("Data do agendamento", msg, parent=self,
-                                         initialvalue=data_atual or "")
-        if data_ag is None:
-            return None
-        try:
-            agendamento_data = dateutils.parse_data_usuario(data_ag)
-        except ValueError as e:
-            messagebox.showerror("Data inválida", str(e), parent=self)
-            return None
-        if dateutils.data_e_passado_ou_hoje(agendamento_data):
-            messagebox.showerror("Erro", "A data do agendamento é igual ou inferior a data atual.",
-                                 parent=self)
-            return None
-        return agendamento_data
 
     def editar_campo(self, nota_id, campo, rotulo):
         nota = db.obter_nota(nota_id)
         if nota is None:
             return
         valor_atual = str(nota[campo])
-        if campo == "cliente":
-            escolha = pedir_opcao(self, "Editar %s" % rotulo,
-                                  "Busque o %s cadastrado (ou digite um novo):" % rotulo.lower(),
-                                  db.listar_clientes())
-            if escolha is None:
-                return
-            novo, cliente_novo = escolha
-        else:
-            cliente_novo = False
-            novo = editar_campo_texto(self, "Editar %s" % rotulo, "Novo valor para %s:" % rotulo, valor_atual)
+        novo = editar_campo_texto(self, "Editar %s" % rotulo, "Novo valor para %s:" % rotulo, valor_atual)
         if novo is None or novo.strip() == "":
             return
         if campo == "nf_numero":
@@ -1751,116 +1194,25 @@ class App(tk.Tk):
                 return
         elif campo in ("cliente", "sigla"):
             novo = novo.strip().upper()
-        try:
-            db.atualizar_campo_nota(nota_id, campo, novo)
-        except db.NotaDuplicadaError:
-            messagebox.showerror("Nota Fiscal duplicada", db.MENSAGEM_NF_DUPLICADA, parent=self)
-            return
-        except sqlite3.Error as erro:
-            messagebox.showerror("Erro", "Falha ao salvar a alteração: %s" % erro, parent=self)
-            return
-        if cliente_novo:
-            # Mesmo comportamento do cadastro de notas: remetente novo entra no cadastro.
-            try:
-                db.adicionar_cliente(novo)
-            except sqlite3.Error:
-                pass
-        cliente_atual = novo if campo == "cliente" else nota["cliente"]
-        sigla_atual = novo if campo == "sigla" else nota["sigla"]
-        self._garantir_visibilidade(cliente_atual, sigla_atual, nota["ocorrencia"])
-        self._atualizar_bloco_rapido(nota_id)
-
-    def editar_data_agendamento(self, nota_id):
-        """Altera somente a data de uma nota cuja ocorrência já é Agendamento."""
-        nota = db.obter_nota(nota_id)
-        if nota is None or not occ.eh_ocorrencia_agendamento(nota["ocorrencia"]):
-            return
-        nova = self._pedir_data_agendamento(nota["agendamento_data"])
-        if nova is None:
-            return
-        try:
-            db.atualizar_campo_nota(nota_id, "agendamento_data", nova)
-        except sqlite3.Error as erro:
-            messagebox.showerror("Erro", "Falha ao salvar a data: %s" % erro, parent=self)
-            return
-        self._atualizar_bloco_rapido(nota_id)
-
-    def gerar_comprovante_nota(self, nota_id):
-        """Abre no navegador o comprovante da nota (dados + todas as
-        tratativas), pronto para imprimir ou salvar como PDF (Ctrl+P)."""
-        try:
-            caminho = comprovante.gerar_comprovante(nota_id)
-        except OSError as erro:
-            messagebox.showerror("Comprovante", "Não foi possível gerar o comprovante: %s" % erro, parent=self)
-            return
-        if caminho:
-            self.mostrar_mensagem_flutuante("Comprovante aberto no navegador")
-
-    def editar_observacao(self, nota_id):
-        """Observação/tag livre da nota (ex.: motivo, protocolo, contato).
-        Texto vazio apaga a observação; cancelar não altera nada."""
-        nota = db.obter_nota(nota_id)
-        if nota is None:
-            return
-        novo = pedir_texto_atualizacao(
-            self, "Observação / tag",
-            "Observação/tag para a NF %s (deixe vazio para remover):" % nota["nf_numero"],
-            nota["observacao"] or "")
-        if novo is None:
-            return
-        novo = novo.strip().upper()
-        db.atualizar_campo_nota(nota_id, "observacao", novo or None)
-        self._atualizar_bloco_rapido(nota_id)
-
-    def duplicar_nota(self, nota_id):
-        """Atalho para cadastrar outra nota do mesmo remetente/sigla: preenche
-        o formulário de nova nota com Remetente e Sigla da nota escolhida e
-        deixa NF e ocorrência para o usuário digitar. O número da NF NÃO é
-        copiado de propósito: a regra de unicidade (NF + Remetente) impede
-        duas notas com o mesmo número para o mesmo remetente."""
-        nota = db.obter_nota(nota_id)
-        if nota is None:
-            return
-        self.var_nf.set("")
-        self.var_cliente.set(nota["cliente"])
-        self.var_ocorrencia.set("")
-        self.var_sigla.set(nota["sigla"])
-        self._suggestion_var.set("")
-        self.entry_nf.focus_set()
+        db.atualizar_campo_nota(nota_id, campo, novo)
+        self.recarregar_lista()
 
     def editar_ocorrencia(self, nota_id):
         nota = db.obter_nota(nota_id)
         if nota is None:
             return
+        novo = editar_campo_texto(self, "Editar ocorrência", "Nova ocorrência:", nota["ocorrencia"])
+        if not novo:
+            return
+        novo = novo.strip().upper()
         tipos = db.listar_tipos_ocorrencia()
-        escolha = pedir_opcao(self, "Editar ocorrência",
-                              "Busque o tipo de ocorrência (ou digite um novo):", tipos)
-        if escolha is None:
-            return
-        ocorrencia_final, eh_novo = escolha
-        ocorrencia_final = ocorrencia_final.strip().upper()
-        if not ocorrencia_final:
-            return
-        if eh_novo:
-            sugestao = occ.sugerir_ocorrencia(ocorrencia_final, tipos)
-            if sugestao:
-                ocorrencia_final, eh_novo = sugestao.upper(), False
-        if eh_novo and not messagebox.askyesno(
-                "Nova ocorrência", "Cadastrar '%s' como novo tipo?" % ocorrencia_final, parent=self):
-            return
-        agendamento_data = None
-        if occ.eh_ocorrencia_agendamento(ocorrencia_final):
-            agendamento_data = self._pedir_data_agendamento(
-                nota["agendamento_data"] if occ.eh_ocorrencia_agendamento(nota["ocorrencia"]) else None)
-            if agendamento_data is None:
-                return  # cancelado/invalido: nada e alterado
-        try:
-            db.atualizar_ocorrencia(nota_id, ocorrencia_final, agendamento_data)
-            if eh_novo:
+        sugestao = occ.sugerir_ocorrencia(novo, tipos)
+        ocorrencia_final = (sugestao if sugestao else novo).upper()
+        if ocorrencia_final.lower() not in [t.lower() for t in tipos]:
+            if messagebox.askyesno("Nova ocorrência", "Cadastrar '%s' como novo tipo?" % ocorrencia_final):
                 db.adicionar_tipo_ocorrencia(ocorrencia_final)
-        except sqlite3.Error as erro:
-            messagebox.showerror("Erro", "Falha ao salvar a alteração: %s" % erro, parent=self)
-            return
+            else:
+                return
+        db.atualizar_campo_nota(nota_id, "ocorrencia", ocorrencia_final)
         self._garantir_visibilidade(nota["cliente"], nota["sigla"], ocorrencia_final)
-        self._atualizar_bloco_rapido(nota_id)
-
+        self.recarregar_lista()
