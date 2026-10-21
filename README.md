@@ -37,15 +37,34 @@ ao lado do `.exe` na primeira execução.
 
 ## Estrutura dos arquivos
 
-- `main.py` — ponto de entrada.
-- `app.py` — janela principal, formulário de cadastro, lista de notas, menus
-  (Cadastros, Relatório, Histórico) e toda a interação do usuário.
-- `dialogs.py` — janelas de pop-up (marcar como resolvido/morosidade, edição de
-  campos, gerenciamento de listas de Cadastros).
-- `database.py` — toda a camada de banco de dados (SQLite).
-- `dateutils.py` — interpretação das datas digitadas e cálculo de dias/horas.
-- `occorrencias.py` — categorias oficiais de ocorrência e lógica de
-  sugestão/autocomplete.
+Só o `main.py` fica solto na raiz; o resto está organizado em pastas:
+
+```
+main.py                  ponto de entrada (python main.py)
+nucleo/                  regras de negócio e dados (sem telas)
+    database.py          banco SQLite (notas, tratativas, histórico, cadastros)
+    dateutils.py         datas digitadas, dias/horas
+    occorrencias.py      tipos de ocorrência, sugestão e busca dinâmica
+    tratativas_rapidas.py atalhos E / W / S da "Nova atualização"
+    posicao_janela.py    posição/tamanho da janela principal
+    desfazer.py          pilha do "Desfazer última alteração"
+    registro_erros.py    erros.log + mensagem amigável
+    backup.py, exportacoes.py, comprovante.py, aparencia.py,
+    atualizacoes.py, versao.py
+interface/               telas e diálogos (Tkinter)
+    app.py               janela principal (monta o menu e junta os módulos abaixo)
+    janelas.py           janelas únicas/na frente + posição da janela principal
+    nota_block.py        bloco visual de cada nota
+    formulario.py        formulário de nova nota
+    busca_filtro.py      busca por NF/texto, filtro por ocorrência, setas
+    lista_notas.py       lista, rolagem e recarga
+    edicao_notas.py      editar/resolver/copiar notas e Desfazer
+    relatorios.py        relatório de morosidade e histórico
+    manutencao.py        backup, exportação, atualização do sistema, cadastros
+    dialogs.py           pop-ups reutilizáveis
+atualizador/             atualizador.py + atualizador.spec (gera o atualizador.exe)
+testes/                  testes automáticos (ver item 38)
+```
 
 ## Funcionalidades implementadas
 
@@ -302,7 +321,7 @@ ao lado do `.exe` na primeira execução.
     de "Nova atualização"**: essa tela usava o campo de entrada padrão do
     Tkinter (`simpledialog.askstring`), que não tem pilha de desfazer/refazer
     e não garante os atalhos de apagar palavra inteira. Criado um diálogo
-    próprio (`CampoTextoComAtalhos`, em `dialogs.py`) baseado num campo de
+    próprio (`CampoTextoComAtalhos`, em `interface/dialogs.py`) baseado num campo de
     texto de uma linha com desfazer/refazer habilitado, com os quatro
     atalhos implementados explicitamente. Visualmente e no uso (Enter
     confirma, Esc cancela) continua se comportando como antes.
@@ -366,6 +385,148 @@ ao lado do `.exe` na primeira execução.
     usuário. Detalhes técnicos e como publicar uma nova versão estão na seção
     "Como publicar uma atualização", mais abaixo.
 
+23. **Copiar nota(s) sem o histórico de tratativas**: o menu de contexto
+    (botão direito) de cada nota ganhou a opção "Copiar informações da nota
+    (sem atualizações)", que copia só o cabeçalho (NF/CLIENTE/OCORRÊNCIA/
+    SIGLA/DATA/AGENDAMENTO), sem as linhas de tratativa abaixo — a opção
+    "Copiar informações da nota" original continua existindo, com as
+    tratativas incluídas. Além disso, um botão "Copiar notas filtradas" foi
+    adicionado ao lado do filtro de ocorrência: ele copia de uma vez o
+    cabeçalho de todas as notas atualmente visíveis na tela (já considerando
+    o filtro de ocorrência e a busca por cliente/sigla/NF em uso no momento),
+    separadas por linha em branco — pensado para a cobrança diária de uma
+    unidade/sigla/empresa inteira de uma vez, sem precisar copiar nota por
+    nota.
+
+24. **Backup automático do banco** (`nucleo/backup.py`): ao fechar o sistema (X ou
+    Arquivo > Sair) é criada uma cópia datada do `sac_logistica.db` na
+    subpasta `backups/`, ao lado do banco. São mantidos os 30 backups
+    automáticos mais recentes (os mais antigos são apagados). Antes da cópia
+    é feito um `wal_checkpoint`, para que as últimas gravações (o banco usa
+    modo WAL) não fiquem de fora. Também há Arquivo > Criar backup agora
+    (manual, nunca apagado automaticamente) e um backup "antes_atualizacao"
+    feito automaticamente antes de aplicar uma atualização do `.exe`. Falha
+    de backup nunca impede o uso ou o fechamento do sistema. Para restaurar:
+    feche o sistema e copie o backup desejado por cima de `sac_logistica.db`.
+25. **Exportações** (`nucleo/exportacoes.py`): Arquivo > Exportar tudo (salvaguarda)
+    cria uma pasta datada com cópia integral do `.db` + `notas.csv`,
+    `tratativas.csv` e `historico.csv`. Nas telas Relatório e Histórico há o
+    botão de exportar para CSV (separador `;`, UTF-8 com BOM — abre direto no
+    Excel em português).
+26. **Observação/tag por nota**: nova coluna opcional `observacao` em `notas`
+    (migração automática por `ALTER TABLE`, sem mexer nos dados existentes).
+    Botão direito > "Editar observação/tag". Aparece no fim do cabeçalho como
+    `OBS: ...` e também no comprovante e nas exportações.
+27. **Nova nota para o mesmo remetente/sigla**: botão direito na nota preenche
+    o formulário de nova nota com Remetente e Sigla, deixando NF e ocorrência
+    para digitar. O número da NF não é copiado de propósito: a regra de
+    unicidade NF + Remetente (item 20) continua valendo e não é contornada.
+28. **Comprovante (impressão/PDF)** (`nucleo/comprovante.py`): botão direito >
+    "Gerar comprovante" cria uma página HTML (dados da nota + todas as
+    tratativas) em `comprovantes/` e a abre no navegador; use Ctrl+P para
+    imprimir ou "Salvar como PDF". Foi feito assim para não adicionar
+    biblioteca externa de PDF ao projeto (empacotamento/Windows 7). Todo texto
+    é escapado (`html.escape`).
+29. **Aparência personalizável** (`nucleo/aparencia.py`, menu "Aparência"): cor da
+    fonte, cor de fundo, cor da nota selecionada e quais campos do cabeçalho
+    ficam em negrito (NF, remetente, ocorrência, sigla, data/hora, dias,
+    agendamento, observação), com pré-visualização. Preferências em
+    `config_aparencia.json` (ao lado do banco, separado dos dados).
+    "Restaurar padrão de fábrica" apaga o arquivo e volta exatamente ao visual
+    original (cor vazia = cor padrão do sistema; negrito padrão: remetente,
+    ocorrência e agendamento). O texto das notas e das cópias não muda com a
+    aparência. Custo de desempenho desprezível: a configuração fica em memória
+    e é aplicada uma vez por bloco (medido: 5000 cabeçalhos em ~0,08 s).
+    Arquivo corrompido ou com valores inválidos é ignorado (volta ao padrão).
+
+30. **Unicidade NF + Remetente só entre notas pendentes** (altera o item 20):
+    o sistema só impede cadastrar uma NF se já houver uma nota **pendente de
+    tratativa** com o mesmo número e remetente. Se a anterior já foi marcada
+    como resolvida, a NF pode ser cadastrada de novo. No banco, o índice UNIQUE
+    global virou um índice **parcial** (`WHERE resolvido = 0`); a migração
+    remove o índice antigo automaticamente, sem apagar nem alterar dados (se
+    houver duas pendentes iguais de versões antigas, o índice é pulado e a
+    regra segue valendo pela checagem na tela). Editar NF/remetente de uma
+    nota para colidir com outra pendente também é bloqueado, com mensagem.
+31. **Rolagem do mouse só na janela em foco**: o binding global da roda do
+    mouse rolava sempre a lista principal, mesmo com Histórico/Cadastros em
+    foco. Agora a rolagem vai somente para a janela que tem o foco (lista
+    principal, Histórico, detalhes do Relatório); em janelas sem área rolável
+    própria (ex.: Cadastros, que usa a rolagem nativa da sua lista) a lista
+    principal não se move.
+32. **NF repetida na busca**: ao buscar um número de NF que existe em mais de
+    uma nota pendente (remetentes diferentes ou reinserida após resolvida), a
+    lista é filtrada mostrando todas as notas com aquele número (ignorando o
+    filtro de ocorrência para nenhuma ficar escondida). No Histórico, o filtro
+    por NF já mostra todos os registros com o número.
+
+33. **Busca dinâmica ao editar remetente/ocorrência**: "Editar remetente" e
+    "Editar ocorrência" abrem uma janela com campo de busca e lista de
+    sugestões filtrada a cada tecla (começa com o texto primeiro, depois
+    contém). Use ↑/↓ ou clique e Enter; sem resultado, o texto vira novo valor
+    (remetente novo é cadastrado; tipo novo pede confirmação, como no cadastro).
+34. **Agendamento na edição**: ao alterar a ocorrência para Agendamento o
+    sistema pede a data (mesmas regras do cadastro; cancelar/inválida não altera
+    nada). Sair de Agendamento limpa a data. Em notas já agendadas, o menu
+    ganha "Alterar data do agendamento", que mostra a data atual e só muda a data.
+
+35. **Atalhos na "Nova atualização"**: digitar só `E`/`e` grava "tratando via
+    e-mail", `W`/`w` grava "tratando via WhatsApp" e `S`/`s` grava
+    "informacoes em sistema" e `R`/`r` grava "MERCADORIA EM ROTA DE ENTREGA
+    HOJE" (como todo o texto das tratativas, é salvo em maiúsculas). Qualquer outro texto é gravado como digitado.
+36. **Registro de erros** (`nucleo/registro_erros.py`): erros inesperados em
+    menus/botões vão para `erros.log` (ao lado do banco; recriado ao passar
+    de 1 MB) e o usuário vê uma mensagem com o caminho do arquivo.
+37. **Desfazer** (menu Editar ou Ctrl+Z na janela principal): desfaz as
+    últimas 30 ações da sessão — edições (NF, remetente, ocorrência/data de
+    agendamento, sigla, observação), "marcar como resolvido" (a nota volta e
+    o registro do histórico é removido), limpeza do histórico e remoção de
+    itens em Cadastros. Se o desfazer criar duplicidade de NF pendente, o
+    sistema avisa e não altera nada. Dentro de campos de texto, Ctrl+Z
+    continua desfazendo a digitação.
+38. **Testes automáticos** (`testes/`): rode `sh testes/executar.sh` (Linux,
+    usa tela virtual) ou `python -m unittest discover -s testes -t . -v`
+    (Windows). Usam um banco temporário e a janela real; rode antes de gerar
+    cada `.exe`.
+39. **Relatório — clientes mais morosos clicáveis**: clicar em um cliente do
+    top 5 abre as notas do histórico em que ele foi apontado como o mais
+    moroso, com dias/horas de cada uma.
+40. **Menu Sobre**: mostra versão, desenvolvedor e contato.
+
+41. **Atalhos globais** (janela principal): `Ctrl+N` limpa o formulário e leva
+    o cursor ao campo da NF; `Ctrl+F` vai para a busca; `F5` recarrega a
+    lista a partir do banco. Também aparecem no menu **Editar**.
+
+42. **Posição da janela principal lembrada** (`nucleo/posicao_janela.py`): ao
+    fechar, o sistema grava tamanho, posição e se estava maximizado em
+    `janela_principal.json` (ao lado do banco) e reabre igual. Se o arquivo
+    sumir/estiver corrompido ou a posição não existir mais (monitor
+    desligado), abre no tamanho padrão.
+43. **Janelas secundárias** (`interface/janelas.py`): Relatório, Histórico,
+    Sobre, Cadastros (empresas, tipos, remetentes), detalhes do relatório e
+    janela de atualização abrem sempre na frente da janela que as chamou e só
+    podem estar abertas uma vez — pedir de novo traz a janela já aberta para
+    a frente (restaurando-a se estiver recolhida).
+
+44. **Dicas visuais dos atalhos**: o rótulo do campo é "NF (CTRL + N):" e há
+    um botão **Atualizar (F5)** antes de "Limpar filtro", com a mesma função
+    da tecla F5.
+45. **Feedbacks ao lado do mouse** (somem em 1 s): "Ocorrência registrada com
+    sucesso." ao cadastrar uma nota e "Ocorrência resolvida pressione
+    CTRL + Z para desfazer" ao marcar como resolvida.
+46. **Busca sem resultado** (NF, cliente ou sigla): o texto digitado é apagado,
+    a lista volta a mostrar todas as notas e o cursor fica no campo, pronto
+    para nova busca.
+47. **Nota duplicada no cadastro**: além do aviso e do destaque da nota
+    existente, o formulário é limpo e o cursor volta ao campo NF.
+48. **Janelas em foco**: Relatório, Histórico, Sobre, Cadastros e demais
+    janelas abrem centralizadas sobre a janela de onde foram chamadas, na
+    frente e já com o foco do teclado.
+
+49. **Cursor já no campo**: ao abrir "Nova atualização" (duplo clique ou Enter
+    na nota), a busca de remetente/ocorrência e a janela de Cadastros, o
+    cursor de digitação já está no campo, sem precisar clicar.
+
 ## Como publicar uma atualização (GitHub Releases)
 
 O sistema verifica atualizações consultando a release mais recente do
@@ -373,12 +534,12 @@ repositório público `zIthalo/sswProgram`. Para distribuir uma nova versão
 para todos os usuários sem precisar reinstalar manualmente em cada
 computador:
 
-1. **Suba a versão**: edite `versao.py` e troque o valor de `VERSAO` (ex.:
+1. **Suba a versão**: edite `nucleo/versao.py` e troque o valor de `VERSAO` (ex.:
    de `"1.0.0"` para `"1.1.0"`).
 2. **Gere o executável principal**: `pyinstaller --onefile --windowed main.py`
    (ou `pyinstaller main.spec`). O arquivo sai em `dist/main.exe`.
 3. **Gere o atualizador** (só precisa ser feito uma vez, a não ser que o
-   próprio `atualizador.py` mude): `pyinstaller atualizador.spec`. O arquivo
+   próprio `atualizador/atualizador.py` mude): `pyinstaller atualizador/atualizador.spec`. O arquivo
    sai em `dist/atualizador.exe`.
 4. **Primeira instalação de um computador novo**: copie `main.exe` e
    `atualizador.exe` juntos, na mesma pasta, para o computador do usuário.
@@ -399,9 +560,9 @@ computador:
    tag, perguntar se quer atualizar e, ao confirmar, baixar e trocar o
    executável sozinho.
 
-**Importante**: a tag no GitHub e o `VERSAO` em `versao.py` precisam bater
+**Importante**: a tag no GitHub e o `VERSAO` em `nucleo/versao.py` precisam bater
 exatamente (só muda o `v` na frente). Se esquecer de atualizar o
-`versao.py` antes de gerar o `.exe`, o sistema instalado vai continuar
+`nucleo/versao.py` antes de gerar o `.exe`, o sistema instalado vai continuar
 pensando que está na versão antiga e vai ficar oferecendo a mesma
 atualização repetidamente.
 
@@ -410,6 +571,6 @@ atualização repetidamente.
 - Empacotar com PyInstaller para gerar um instalador único para os
   atendentes que não tenham Python instalado.
 - Se a base de usuários crescer muito, considerar migrar de SQLite para um
-  banco cliente/servidor (ex. PostgreSQL) — a camada `database.py` foi escrita
+  banco cliente/servidor (ex. PostgreSQL) — a camada `nucleo/database.py` foi escrita
   de forma isolada exatamente para facilitar essa troca no futuro, sem
   precisar alterar a interface gráfica.
