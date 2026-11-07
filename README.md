@@ -604,6 +604,11 @@ testes/                  testes automáticos (ver item 38) + capturar_tela.py (i
     o usa via `interface/icone.py`. Para o `.exe` ter o ícone, compile com
     `pyinstaller --onefile --windowed --icon recursos/icone.ico --add-data "recursos/icone.ico;recursos" main.py`.
 
+59. **Alterações ficam nas tratativas**: ao editar NF, remetente, ocorrência, sigla ou observação/tag
+    de uma nota, o sistema acrescenta nas tratativas dela, por exemplo,
+    `SIGLA ALTERADA DE SP PARA RJ` (Ctrl+Z desfaz a edição e remove essa linha). Além disso, a
+    janela da data de agendamento passou a abrir já com o cursor no campo.
+
 ## Como publicar uma atualização (GitHub Releases)
 
 O sistema verifica atualizações consultando a release mais recente do

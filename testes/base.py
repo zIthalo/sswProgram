@@ -52,9 +52,14 @@ class BaseTela(unittest.TestCase):
         self._mock_data = mock.patch.object(
             simpledialog, "askstring", lambda *a, **k: self.respostas_data.pop(0))
         self._mock_data.start()
+        # a data de agendamento agora usa pedir_texto_atualizacao (dialogo com foco automatico)
+        self._mock_data2 = mock.patch(
+            "interface.edicao_notas.pedir_texto_atualizacao",
+            lambda *a, **k: self.respostas_data.pop(0))
+        self._mock_data2.start()
 
     def tearDown(self):
-        for m in self._mocks + [self._mock_data]:
+        for m in self._mocks + [self._mock_data, self._mock_data2]:
             m.stop()
         try:
             self.app.destroy()

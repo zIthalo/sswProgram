@@ -513,6 +513,18 @@ def adicionar_tratativa(nota_id, texto):
     return ts
 
 
+def remover_tratativa(nota_id, timestamp, texto):
+    """Remove a tratativa (a mais recente) com esse timestamp/texto - usado ao desfazer uma edicao."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "DELETE FROM tratativas WHERE id = (SELECT MAX(id) FROM tratativas "
+            "WHERE nota_id=? AND timestamp=? AND texto=?)", (nota_id, timestamp, texto))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def listar_tratativas(nota_id):
     conn = get_connection()
     cur = conn.cursor()
