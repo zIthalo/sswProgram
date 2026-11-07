@@ -71,13 +71,36 @@ class EdicaoNotasMixin:
     # ------------------------------------------------------------------
     # Desfazer (Ctrl+Z na janela principal / menu Editar)
     # ------------------------------------------------------------------
-    def _registrar_desfazer_campos(self, nota_antes, descricao, campos):
-        """Guarda a 'foto' dos campos da nota ANTES da edicao para o Desfazer."""
+    def _registrar_desfazer_campos(self, nota_antes, descricao, campos, tratativa=None):
+        """Guarda a 'foto' dos campos da nota ANTES da edicao para o Desfazer.
+        tratativa: (timestamp, texto) da linha 'alterado de ... para ...' criada junto com a
+        edicao; ao desfazer, ela tambem e removida."""
         antes = {c: nota_antes[c] for c in campos}
         nota_id = nota_antes["id"]
-        self.pilha_desfazer.registrar(
-            "%s da NF %s" % (descricao, nota_antes["nf_numero"]),
-            lambda: db.restaurar_campos_nota(nota_id, antes))
+
+        def desfazer():
+            db.restaurar_campos_nota(nota_id, antes)
+            if tratativa:
+                db.remover_tratativa(nota_id, tratativa[0], tratativa[1])
+
+        self.pilha_desfazer.registrar("%s da NF %s" % (descricao, nota_antes["nf_numero"]), desfazer)
+
+    def _registrar_alteracao_tratativa(self, nota_id, rotulo, antes, depois):
+        """Escreve nas tratativas da nota '<CAMPO> ALTERADO DE <antes> PARA <depois>', para o
+        usuario lembrar da alteracao. Retorna (timestamp, texto) ou None se nada mudou."""
+        antes = str(antes).strip() if antes not in (None, "") else "(VAZIO)"
+        depois = str(depois).strip() if depois not in (None, "") else "(VAZIO)"
+        if antes.upper() == depois.upper():
+            return None
+        texto = ("%s DE %s PARA %s" % (rotulo, antes, depois)).upper()
+        try:
+            timestamp = db.adicionar_tratativa(nota_id, texto)
+        except sqlite3.Error:
+            return None
+        bloco = self.blocos.get(nota_id)
+        if bloco is not None:  # o cartao e redesenhado em seguida por _atualizar_bloco_rapido
+            bloco._tratativas.append({"timestamp": timestamp, "texto": texto})
+        return timestamp, texto
 
     def desfazer_ultima_alteracao(self, event=None):
         if self.pilha_desfazer.vazia():
@@ -143,8 +166,9 @@ class EdicaoNotasMixin:
         if data_atual:
             msg = "Data atual do agendamento: %s\n\n%s" % (
                 dateutils.formatar_data_exibicao(data_atual), msg)
-        data_ag = simpledialog.askstring("Data do agendamento", msg, parent=self,
-                                         initialvalue=data_atual or "")
+        # Mesmo dialogo das tratativas: abre ja com o cursor no campo (o askstring padrao
+        # deixava a janela sem foco e o usuario tinha que clicar no campo).
+        data_ag = pedir_texto_atualizacao(self, "Data do agendamento", msg, data_atual or "")
         if data_ag is None:
             return None
         try:
@@ -191,7 +215,10 @@ class EdicaoNotasMixin:
         except sqlite3.Error as erro:
             messagebox.showerror("Erro", "Falha ao salvar a alteração: %s" % erro, parent=self)
             return
-        self._registrar_desfazer_campos(nota, "edição de %s" % rotulo.lower(), [campo])
+        rotulo_alteracao = {"nf_numero": "NÚMERO DA NF ALTERADO", "cliente": "REMETENTE ALTERADO",
+                            "sigla": "SIGLA ALTERADA"}[campo]
+        trat = self._registrar_alteracao_tratativa(nota_id, rotulo_alteracao, nota[campo], novo)
+        self._registrar_desfazer_campos(nota, "edição de %s" % rotulo.lower(), [campo], trat)
         if cliente_novo:
             # Mesmo comportamento do cadastro de notas: remetente novo entra no cadastro.
             try:
@@ -244,7 +271,8 @@ class EdicaoNotasMixin:
             return
         novo = novo.strip().upper()
         db.atualizar_campo_nota(nota_id, "observacao", novo or None)
-        self._registrar_desfazer_campos(nota, "edição da observação", ["observacao"])
+        trat = self._registrar_alteracao_tratativa(nota_id, "OBSERVAÇÃO/TAG ALTERADA", nota["observacao"], novo)
+        self._registrar_desfazer_campos(nota, "edição da observação", ["observacao"], trat)
         self._atualizar_bloco_rapido(nota_id)
 
     def duplicar_nota(self, nota_id):
@@ -296,7 +324,10 @@ class EdicaoNotasMixin:
         except sqlite3.Error as erro:
             messagebox.showerror("Erro", "Falha ao salvar a alteração: %s" % erro, parent=self)
             return
-        self._registrar_desfazer_campos(nota, "alteração da ocorrência", ["ocorrencia", "agendamento_data"])
+        trat = self._registrar_alteracao_tratativa(nota_id, "OCORRÊNCIA ALTERADA", nota["ocorrencia"],
+                                                   ocorrencia_final)
+        self._registrar_desfazer_campos(nota, "alteração da ocorrência", ["ocorrencia", "agendamento_data"],
+                                        trat)
         self._garantir_visibilidade(nota["cliente"], nota["sigla"], ocorrencia_final)
         self._atualizar_bloco_rapido(nota_id)
 
