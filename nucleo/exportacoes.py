@@ -14,8 +14,8 @@ import os
 import shutil
 from datetime import datetime
 
-import backup
-import database as db
+from nucleo import backup
+from nucleo import database as db
 
 SEPARADOR = ";"
 ENCODING = "utf-8-sig"

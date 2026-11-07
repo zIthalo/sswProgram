@@ -17,8 +17,8 @@ import os
 import webbrowser
 from datetime import datetime
 
-import database as db
-import dateutils
+from nucleo import database as db
+from nucleo import dateutils
 
 
 def _linha(rotulo, valor):

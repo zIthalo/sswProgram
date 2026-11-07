@@ -18,7 +18,8 @@ def get_db_path():
     if getattr(sys, "frozen", False):
         base_dir = os.path.dirname(sys.executable)
     else:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        # nucleo/ fica dentro da raiz do projeto: o banco fica na raiz (ao lado do main.py).
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_dir, DB_NAME)
 
 
@@ -106,8 +107,16 @@ def init_db():
 
     # Migracao: remove colunas relacionadas a lembretes (funcionalidade removida
     # do sistema) da tabela notas, recriando-a sem elas caso ainda existam.
-    _migrar_remover_lembretes(cur)
-    conn.commit()
+    # ATENCAO: recriar a tabela 'notas' com as chaves estrangeiras LIGADAS apagaria
+    # todas as tratativas (DROP TABLE faz um DELETE implicito e o ON DELETE CASCADE
+    # dispara). Por isso as chaves ficam desligadas so durante esta migracao.
+    conn.commit()  # o PRAGMA abaixo so tem efeito fora de uma transacao
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        _migrar_remover_lembretes(cur)
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
     # Migracao: adiciona a coluna 'observacao' (tag/observacao livre por nota)
     # em bancos de versoes anteriores que ainda nao a possuem. ALTER TABLE
@@ -368,6 +377,62 @@ def atualizar_ocorrencia(nota_id, ocorrencia, agendamento_data=None):
         conn.close()
 
 
+CAMPOS_RESTAURAVEIS = ("nf_numero", "cliente", "ocorrencia", "sigla", "data_ocorrencia",
+                       "agendamento_data", "observacao")
+
+
+def restaurar_campos_nota(nota_id, valores):
+    """Grava de volta, num unico UPDATE, os campos de `valores` (dict
+    campo -> valor). Usada pelo Desfazer. Levanta NotaDuplicadaError se o
+    valor antigo agora colidir com outra nota pendente."""
+    campos = [c for c in valores if c in CAMPOS_RESTAURAVEIS]
+    if not campos:
+        return False
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE notas SET %s WHERE id=?" % ", ".join("%s=?" % c for c in campos),
+                    [valores[c] for c in campos] + [nota_id])
+        conn.commit()
+        return cur.rowcount > 0
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise NotaDuplicadaError(MENSAGEM_NF_DUPLICADA)
+    finally:
+        conn.close()
+
+
+def reabrir_nota(nota_id, historico_id=None):
+    """Desfaz 'Marcar como resolvido': reabre a nota e remove do historico o
+    registro criado na resolucao (tudo na mesma transacao)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE notas SET resolvido=0 WHERE id=?", (nota_id,))
+        if historico_id is not None:
+            cur.execute("DELETE FROM historico WHERE id=?", (historico_id,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise NotaDuplicadaError(MENSAGEM_NF_DUPLICADA)
+    finally:
+        conn.close()
+
+
+def restaurar_historico(registros):
+    """Reinsere registros do historico (rows ja lidos) - usado ao desfazer 'Apagar historico'."""
+    conn = get_connection()
+    try:
+        conn.executemany(
+            "INSERT OR IGNORE INTO historico (id, nf_numero, cliente, ocorrencia, sigla, dias, horas,"
+            " morosidade, resolvido_em) VALUES (?,?,?,?,?,?,?,?,?)",
+            [(r["id"], r["nf_numero"], r["cliente"], r["ocorrencia"], r["sigla"], r["dias"],
+              r["horas"], r["morosidade"], r["resolvido_em"]) for r in registros])
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def remover_nota(nota_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -378,6 +443,23 @@ def remover_nota(nota_id):
 
 def marcar_resolvida(nota_id):
     atualizar_campo_nota(nota_id, "resolvido", 1)
+
+
+def listar_siglas_conhecidas():
+    """Siglas/empresas conhecidas: usadas em alguma nota (ativa ou do historico)
+    ou cadastradas como empresa parceira. Usada pela busca para reconhecer
+    quando o texto digitado e uma sigla (ver nucleo/busca.py)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT sigla AS s FROM notas
+            UNION SELECT sigla FROM historico
+            UNION SELECT nome FROM empresas_parceiras
+        """)
+        return [r["s"] for r in cur.fetchall() if r["s"]]
+    finally:
+        conn.close()
 
 
 def listar_ocorrencias_em_uso():
@@ -594,7 +676,9 @@ def inserir_historico(nf_numero, cliente, ocorrencia, sigla, dias, horas, morosi
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (nf_numero, cliente, ocorrencia, sigla, dias, horas, morosidade, datetime.now().isoformat()))
     conn.commit()
+    novo_id = cur.lastrowid
     conn.close()
+    return novo_id
 
 
 def buscar_historico_por_nf(nf_numero):
@@ -619,6 +703,23 @@ def buscar_historico_por_sigla(sigla, somente_morosidade_unidade=False):
             (sigla,))
     else:
         cur.execute("SELECT * FROM historico WHERE sigla=? ORDER BY resolvido_em DESC", (sigla,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def buscar_historico_por_cliente(cliente, somente_morosidade_cliente=False):
+    """Registros do historico de um cliente/remetente (itens clicaveis do
+    relatorio). Com somente_morosidade_cliente=True traz apenas os casos em
+    que o proprio cliente foi apontado como o mais moroso."""
+    conn = get_connection()
+    cur = conn.cursor()
+    if somente_morosidade_cliente:
+        cur.execute(
+            "SELECT * FROM historico WHERE cliente=? AND morosidade='cliente' ORDER BY resolvido_em DESC",
+            (cliente,))
+    else:
+        cur.execute("SELECT * FROM historico WHERE cliente=? ORDER BY resolvido_em DESC", (cliente,))
     rows = cur.fetchall()
     conn.close()
     return rows
