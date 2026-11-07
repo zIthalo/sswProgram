@@ -12,6 +12,7 @@ from nucleo import database as db
 from nucleo.desfazer import PilhaDesfazer
 from nucleo import versao
 from interface import tema
+from interface.icone import aplicar_icone
 from interface.dialogs import JanelaAparencia
 from interface.layout import LayoutMixin
 from interface.janelas import JanelasMixin
@@ -32,6 +33,7 @@ class App(LayoutMixin, JanelasMixin, ManutencaoMixin, RelatoriosMixin, Formulari
         super().__init__()
         self.title("Auxiliador de Processos Logísticos - SAC")
         self.minsize(480, 400)
+        aplicar_icone(self)
         self._janelas_unicas = {}  # chave da janela -> Toplevel aberto (ver interface/janelas.py)
         self._restaurar_posicao_janela("1100x720")  # abre onde o usuario fechou da ultima vez
 

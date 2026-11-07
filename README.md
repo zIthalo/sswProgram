@@ -600,6 +600,10 @@ testes/                  testes automáticos (ver item 38) + capturar_tela.py (i
     Nova atualização numa nota: a linha entra direto no cartão (≈5 ms), a altura e a
     rolagem se ajustam na hora, sem recarregar a lista.
 
+58. **Ícone do programa**: `recursos/icone.ico` (caixa de encomenda com selo verde de "ok"). A janela
+    o usa via `interface/icone.py`. Para o `.exe` ter o ícone, compile com
+    `pyinstaller --onefile --windowed --icon recursos/icone.ico --add-data "recursos/icone.ico;recursos" main.py`.
+
 ## Como publicar uma atualização (GitHub Releases)
 
 O sistema verifica atualizações consultando a release mais recente do
