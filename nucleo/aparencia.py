@@ -21,7 +21,7 @@ import json
 import os
 import re
 
-import database as db
+from nucleo import database as db
 
 NOME_ARQUIVO = "config_aparencia.json"
 

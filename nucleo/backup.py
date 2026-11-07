@@ -28,7 +28,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 
-import database as db
+from nucleo import database as db
 
 NOME_PASTA_BACKUPS = "backups"
 MAXIMO_BACKUPS_AUTOMATICOS = 30

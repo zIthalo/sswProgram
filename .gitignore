@@ -6,6 +6,12 @@
 *.db-wal
 *.db-shm
 
+# Dados locais do usuario gerados pelo sistema (nunca versionar)
+backups/
+comprovantes/
+exportacao_sac_*/
+config_aparencia.json
+
 # Saida do PyInstaller (gerada localmente a cada build, nao faz sentido
 # versionar - quem precisa dos .exe pronto baixa pelo GitHub Releases)
 build/
@@ -22,3 +28,6 @@ __pycache__/
 .idea/
 Thumbs.db
 .DS_Store
+erros.log
+erros.log.antigo
+janela_principal.json

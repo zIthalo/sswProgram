@@ -7,9 +7,9 @@ Janelas de dialogo (popups) reutilizaveis pela aplicacao principal.
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox, colorchooser
 
-import aparencia
-import dateutils
-import occorrencias as occ
+from nucleo import aparencia
+from nucleo import dateutils
+from nucleo import occorrencias as occ
 
 
 class PerguntaMorosidade(tk.Toplevel):
@@ -60,6 +60,8 @@ class PerguntaMorosidade(tk.Toplevel):
         self.transient(master)
         self.update_idletasks()
         self.geometry("+%d+%d" % (master.winfo_rootx() + 60, master.winfo_rooty() + 60))
+        self.focus_force()
+        self.lift()
         self.focus_force()
         self.wait_window(self)
 
@@ -166,6 +168,9 @@ class CampoTextoComAtalhos(tk.Toplevel):
         pos_x = master.winfo_rootx() + (master.winfo_width() // 2) - (largura // 2)
         pos_y = master.winfo_rooty() + (master.winfo_height() // 2) - (altura // 2)
         self.geometry("+%d+%d" % (max(pos_x, 0), max(pos_y, 0)))
+        self.lift()
+        self.focus_force()
+        self._focar_campo()
         self.wait_window(self)
 
     def _confirmar(self, event=None):
@@ -177,6 +182,10 @@ class CampoTextoComAtalhos(tk.Toplevel):
         self.resultado = None
         self.destroy()
         return "break"
+
+    def _focar_campo(self):
+        # focus_force leva o foco para a janela; o cursor de digitacao precisa ir para o campo.
+        self.texto.focus_set()
 
     def _desfazer(self, event=None):
         try:
@@ -216,8 +225,10 @@ class GerenciarLista(tk.Toplevel):
     Recebe funcoes de listar, adicionar e remover.
     """
 
-    def __init__(self, master, titulo, listar_fn, adicionar_fn, remover_fn, permitir_remover_todos=True):
+    def __init__(self, master, titulo, listar_fn, adicionar_fn, remover_fn, permitir_remover_todos=True,
+                 ao_remover=None):
         super().__init__(master)
+        self.ao_remover = ao_remover  # callback(nome) apos remover (usado p/ registrar o Desfazer)
         self.title(titulo)
         self.geometry("360x400")
         self.listar_fn = listar_fn
@@ -234,7 +245,9 @@ class GerenciarLista(tk.Toplevel):
         linha = ttk.Frame(frame)
         linha.pack(fill="x")
         self.var_novo = tk.StringVar()
-        ttk.Entry(linha, textvariable=self.var_novo).pack(side="left", fill="x", expand=True)
+        self.entry_novo = ttk.Entry(linha, textvariable=self.var_novo)
+        self.entry_novo.pack(side="left", fill="x", expand=True)
+        self.widget_foco = self.entry_novo  # recebe o cursor quando a janela ganha foco
         ttk.Button(linha, text="Adicionar", command=self._adicionar).pack(side="left", padx=(6, 0))
         ttk.Button(frame, text="Remover selecionado", command=self._remover).pack(fill="x", pady=(8, 0))
 
@@ -265,6 +278,8 @@ class GerenciarLista(tk.Toplevel):
             messagebox.showwarning("Ação bloqueada", "É necessário manter ao menos um item.", parent=self)
             return
         self.remover_fn(nome)
+        if self.ao_remover:
+            self.ao_remover(nome)
         self._recarregar()
 
 
@@ -339,6 +354,8 @@ class JanelaAparencia(tk.Toplevel):
         pos_x = master.winfo_rootx() + (master.winfo_width() // 2) - (self.winfo_reqwidth() // 2)
         pos_y = master.winfo_rooty() + (master.winfo_height() // 2) - (self.winfo_reqheight() // 2)
         self.geometry("+%d+%d" % (max(pos_x, 0), max(pos_y, 0)))
+        self.lift()
+        self.focus_force()
         self.wait_window(self)
 
     def _escolher(self, chave):
@@ -481,6 +498,9 @@ class EscolherComBusca(tk.Toplevel):
         pos_x = master.winfo_rootx() + (master.winfo_width() // 2) - (self.winfo_reqwidth() // 2)
         pos_y = master.winfo_rooty() + (master.winfo_height() // 2) - (self.winfo_reqheight() // 2)
         self.geometry("+%d+%d" % (max(pos_x, 0), max(pos_y, 0)))
+        self.lift()
+        self.focus_force()
+        self.entry.focus_set()
         self.wait_window(self)
 
     def _atualizar(self, destacar_primeiro):

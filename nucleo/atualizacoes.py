@@ -29,7 +29,7 @@ import tempfile
 import urllib.error
 import urllib.request
 
-import versao
+from nucleo import versao
 
 TIMEOUT_VERIFICACAO = 6
 TIMEOUT_DOWNLOAD = 30
