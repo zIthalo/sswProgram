@@ -14,7 +14,7 @@ uma versao nova (ou vai ficar perguntando por uma atualizacao que, na
 pratica, e a mesma versao que ja esta rodando).
 """
 
-VERSAO = "1.2.2"
+VERSAO = "1.2.3"
 
 REPOSITORIO_GITHUB = "zIthalo/sswProgram"
 URL_API_ULTIMA_RELEASE = "https://api.github.com/repos/%s/releases/latest" % REPOSITORIO_GITHUB
