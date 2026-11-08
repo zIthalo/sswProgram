@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['main.py'],
+    ['sac_logistica.py'],
     pathex=[],
     binaries=[],
-    datas=[('recursos/icone.ico', 'recursos')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main',
+    name='sac_logistica',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -35,5 +35,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['recursos\\icone.ico'],
 )
