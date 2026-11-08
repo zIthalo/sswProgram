@@ -1,1 +1,3 @@
 pyinstaller --onefile --windowed main.py
+
+pyinstaller --onefile --windowed atualizador/atualizador.py
