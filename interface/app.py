@@ -134,7 +134,7 @@ class App(LayoutMixin, JanelasMixin, ManutencaoMixin, RelatoriosMixin, Formulari
         self.bind("<F5>", self.atalho_atualizar_lista)
 
         m_cadastros = tk.Menu(barra, tearoff=0)
-        m_cadastros.add_command(label="Empresas parceiras (Agex, Risso, etc.)",
+        m_cadastros.add_command(label="Empresas parceiras",
                                  command=self._gerenciar_empresas_parceiras)
         m_cadastros.add_command(label="Tipos de ocorrência",
                                  command=self._gerenciar_tipos_ocorrencia)

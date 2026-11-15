@@ -157,13 +157,6 @@ def init_db():
         except sqlite3.IntegrityError:
             pass
 
-    # Popular empresas parceiras padrao (Agex, Risso) se ainda nao existirem
-    for nome in ["Agex", "Risso"]:
-        try:
-            cur.execute("INSERT INTO empresas_parceiras (nome) VALUES (?)", (nome,))
-        except sqlite3.IntegrityError:
-            pass
-
     conn.commit()
 
     # Migracao: converte todos os tipos de ocorrencia ja cadastrados (inclusive
@@ -575,7 +568,7 @@ def buscar_notas_ativas_por_texto_tratativa(texto):
 
 
 # ---------------------------------------------------------------------------
-# Empresas parceiras (Agex, Risso, etc.)
+# Empresas parceiras
 # ---------------------------------------------------------------------------
 
 def listar_empresas_parceiras():

@@ -21,7 +21,7 @@ python main.py
 
 Na primeira execução, o sistema cria automaticamente o arquivo `sac_logistica.db`
 (SQLite) na mesma pasta do programa, já com as categorias oficiais de ocorrência
-e as empresas parceiras padrão (Agex, Risso) cadastradas.
+e sem empresas parceiras (cadastre as suas em **Cadastros → Empresas parceiras**).
 
 ## Gerando um .exe para Windows (opcional)
 
@@ -75,7 +75,7 @@ testes/                  testes automáticos (ver item 38) + capturar_tela.py (i
 ### Cadastro de notas
 
 - Cadastro de NF, cliente/remetente e sigla da unidade ou nome da empresa
-  parceira (Agex, Risso — editável em **Cadastros → Empresas parceiras**,
+  parceira (editável em **Cadastros → Empresas parceiras**,
   permitindo incluir/excluir conforme novas parcerias).
 - Tipos de ocorrência sugeridos por padrão: REENTREGA, MUDOU-SE, LOCALIZAÇÃO,
   ACOMPANHAR, COMPROVANTE, PRIORIZAR ENTREGA, AGENDAMENTO, DEVOLUÇÃO e
@@ -212,7 +212,7 @@ testes/                  testes automáticos (ver item 38) + capturar_tela.py (i
    automáticos foi removida do sistema nesta versão, eliminando de vez essa
    classe de problema.
 4. A sigla de unidade aceita tanto siglas de 3 letras quanto o nome de uma
-   empresa parceira cadastrada (Agex, Risso, etc.) — o campo é o mesmo, sem
+   empresa parceira cadastrada — o campo é o mesmo, sem
    distinção de formato.
 5. **Correção de bloco expandindo**: ao adicionar uma nova nota, o cabeçalho
    (que usa um campo de texto para permitir negrito em CLIENTE/OCORRÊNCIA/
