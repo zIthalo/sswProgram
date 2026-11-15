@@ -737,24 +737,10 @@ def buscar_historico_por_cliente(cliente, somente_morosidade_cliente=False):
     return rows
 
 
-def limpar_historico_expirado(dias=60):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, resolvido_em FROM historico")
-    rows = cur.fetchall()
-    agora = datetime.now()
-    for r in rows:
-        try:
-            dt = datetime.fromisoformat(r["resolvido_em"])
-        except ValueError:
-            continue
-        if (agora - dt).days >= dias:
-            cur.execute("DELETE FROM historico WHERE id=?", (r["id"],))
-    conn.commit()
-    conn.close()
-
-
 def limpar_historico_manual():
+    """Apaga TODO o historico. Unica forma de excluir registros do historico: so e chamada
+    pelo botao 'Apagar historico', depois de confirmacao digitada pelo usuario.
+    NAO existe exclusao automatica por idade: o historico e preservado indefinidamente."""
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("DELETE FROM historico")

@@ -8,6 +8,7 @@ from tkinter import ttk, messagebox
 
 from nucleo import database as db
 from nucleo import exportacoes
+from interface.dialogs import confirmar_apagar_historico
 
 
 class RelatoriosMixin:
@@ -16,7 +17,6 @@ class RelatoriosMixin:
         self._abrir_janela_unica("clientes_cnpj", lambda: JanelaClientesCnpj(self))
 
     def _abrir_relatorio(self):
-        db.limpar_historico_expirado(60)
         try:
             dados = db.gerar_relatorio()
         except Exception:
@@ -114,14 +114,17 @@ class RelatoriosMixin:
                    command=lambda: self._exportar_csv(
                        "Exportar relatório", "relatorio_sac.csv",
                        exportacoes.exportar_relatorio_csv, janela)).pack(anchor="w", pady=(0, 6))
-        ttk.Button(frame, text="Ver histórico completo (60 dias)",
+        ttk.Button(frame, text="Ver histórico completo",
                    command=self._abrir_historico).pack(anchor="w")
-        ttk.Button(frame, text="Apagar histórico (60 dias)",
+        ttk.Button(frame, text="Apagar histórico...",
                    command=lambda: self._apagar_historico(janela)).pack(anchor="w", pady=(6, 0))
 
     def _apagar_historico(self, janela):
-        if messagebox.askyesno("Confirmar", "Deseja realmente apagar todo o histórico?", parent=janela):
-            registros = list(db.listar_historico())
+        registros = list(db.listar_historico())
+        if not registros:
+            messagebox.showinfo("Apagar histórico", "O histórico já está vazio.", parent=janela)
+            return
+        if confirmar_apagar_historico(janela, len(registros)):
             db.limpar_historico_manual()
             if registros:
                 self.pilha_desfazer.registrar(
@@ -131,22 +134,20 @@ class RelatoriosMixin:
             self._abrir_relatorio()
 
     def _abrir_historico(self):
-        """Aba de Histórico: mostra todas as notas tratadas nos últimos 60
-        dias, do mais recente para o mais antigo, com filtros por cliente,
-        sigla e número de NF."""
-        db.limpar_historico_expirado(60)
-
+        """Aba de Histórico: mostra todas as notas tratadas (sem limite de
+        idade), do mais recente para o mais antigo, com filtros por cliente,
+        sigla e número de NF. Abrir esta tela nunca apaga registros."""
         if self._reapresentar_janela("historico"):
             return
         janela = tk.Toplevel(self)
         self._registrar_janela("historico", janela)
-        janela.title("Histórico (últimos 60 dias)")
+        janela.title("Histórico")
         janela.geometry("560x620")
         janela.minsize(420, 400)
         frame = ttk.Frame(janela, padding=12)
         frame.pack(fill="both", expand=True)
 
-        ttk.Label(frame, text="Histórico de notas tratadas (últimos 60 dias)",
+        ttk.Label(frame, text="Histórico de notas tratadas",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
         linha_filtros = ttk.Frame(frame)

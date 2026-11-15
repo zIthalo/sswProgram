@@ -103,6 +103,23 @@ def fluxo_marcar_resolvido(master, nota_row):
     }
 
 
+PALAVRA_CONFIRMACAO_APAGAR = "APAGAR"
+
+
+def confirmar_apagar_historico(master, total):
+    """Confirmacao explicita para apagar o historico: o usuario precisa DIGITAR a palavra
+    APAGAR. Retorna True so se ela for digitada corretamente; qualquer outra coisa
+    (cancelar, texto diferente, fechar a janela) retorna False e nada e apagado."""
+    resposta = simpledialog.askstring(
+        "Apagar histórico - confirmação",
+        "ATENÇÃO: esta operação é IRREVERSÍVEL.\n\n"
+        "Os %d registro(s) do histórico serão apagados definitivamente e "
+        "não poderão ser recuperados depois que o programa for fechado.\n\n"
+        "Para confirmar, digite %s e clique em OK:" % (total, PALAVRA_CONFIRMACAO_APAGAR),
+        parent=master)
+    return (resposta or "").strip().upper() == PALAVRA_CONFIRMACAO_APAGAR
+
+
 def editar_campo_texto(master, titulo, rotulo, valor_atual):
     return simpledialog.askstring(titulo, rotulo, initialvalue=valor_atual, parent=master)
 

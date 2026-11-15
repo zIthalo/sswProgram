@@ -39,7 +39,6 @@ class App(LayoutMixin, JanelasMixin, ManutencaoMixin, RelatoriosMixin, Formulari
 
         self.pilha_desfazer = PilhaDesfazer()
         db.init_db()
-        db.limpar_historico_expirado(60)
         aparencia.carregar()
         self._aplicar_estilos_aparencia()
 

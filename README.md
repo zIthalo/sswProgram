@@ -164,12 +164,14 @@ testes/                  testes automáticos (ver item 38) + capturar_tela.py (i
   e pergunta apenas **quem demorou mais para resolver o caso** — Unidade
   (clique ou tecla `U`), Cliente (clique ou tecla `C`) ou Sem morosidade
   (`Enter`). O resultado é salvo no histórico.
-- **Aba Histórico** (menu superior): mostra todas as notas tratadas nos
-  últimos 60 dias, sempre em **ordem decrescente** (da mais recente para a
+- **Aba Histórico** (menu superior): mostra todas as notas tratadas (sem
+  limite de idade), sempre em **ordem decrescente** (da mais recente para a
   mais antiga), com filtros por nome do cliente, sigla da unidade e número
   de NF (os filtros funcionam em tempo real, conforme o usuário digita).
-- O histórico expira automaticamente após 60 dias, e também pode ser
-  apagado manualmente a qualquer momento pela tela de Relatório.
+- O histórico **nunca é apagado automaticamente**: ele é preservado
+  indefinidamente. A única forma de excluí-lo é o botão "Apagar histórico..."
+  da tela de Relatório, que exige digitar `APAGAR` e avisa que a operação é
+  irreversível.
 
 ### Relatório
 
@@ -196,9 +198,10 @@ testes/                  testes automáticos (ver item 38) + capturar_tela.py (i
 
 ## Observações e simplificações assumidas
 
-1. O histórico de 60 dias é limpo automaticamente a cada abertura do
-   sistema e a cada abertura das telas de Relatório/Histórico, além de
-   poder ser apagado manualmente a qualquer momento.
+1. O histórico **não é mais limpo automaticamente** (a limpeza de 60 dias
+   foi removida): abrir o sistema ou as telas de Relatório/Histórico nunca
+   exclui registros. Só o botão manual "Apagar histórico..." exclui, com
+   confirmação digitada.
 2. Os "dias e horas em tratativas" salvos no histórico ao marcar uma nota
    como resolvida são sempre calculados automaticamente a partir da
    data/hora de inserção da nota até o momento da resolução.
